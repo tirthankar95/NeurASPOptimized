@@ -521,6 +521,9 @@ class TestSpeeds(unittest.TestCase):
         nnMapping = {'card': m}
         optimizers = {'card': torch.optim.Adam(m.parameters())}
         trainDataset, __, dprogram = get_dataset(f'card_{op}_{cards}', './data')
+        expand = 1.0
+        if sample_size is not None:
+            expand = len(trainDataset) / sample_size
         if sample_size is not None:
             trainDataset = torch.utils.data.Subset(trainDataset, range(min(sample_size, len(trainDataset))))
         dataList = []
@@ -558,9 +561,6 @@ class TestSpeeds(unittest.TestCase):
         optimizers = {'card': torch.optim.Adam(m.parameters())}
         dataLoader = torch.utils.data.DataLoader(trainDataset, batch_size=32)
         #newgrasp_time = measure_newgrasp_speed(dprogram, nnMapping, optimizers, dataLoader, example_name)
-        expand = 1.0
-        if sample_size is not None:
-            expand = len(dataList) / sample_size
         save_timings(expand=expand)
         remove_cached_stable_models()
         # New code should be faster than existing code
