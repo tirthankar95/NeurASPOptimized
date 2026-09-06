@@ -6,16 +6,17 @@ import time
 import unittest
 from unittest import mock
 
+import numpy as np
 import torch
-from mvpp import MVPP
-from slash import SLASH
 
+from mvpp import MVPP
 from mvpp_gnew import MVPP as MVPPGnew
 from mvpp_new import MVPP as MVPPNew
 from mvpp_slash import MVPP as MVPPSlash
 from neurasp import NeurASP
 from newgrasp import NeurASP as NewGraspASP
 from newrasp import NeurASP as NewrASP
+from slash import SLASH
 
 elapsed_times = {}
 ROOT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -126,7 +127,7 @@ def save_timings():
         "new_": "newrasp_",
         'newgrasp_': 'newgrasp_'
     }
-    known_prefixes = tuple(p for p in prefixes if p)  # non-empty ones
+    known_prefixes = tuple(p for p in prefixes.keys() if p)  # non-empty ones
     # --- discover base example names from unprefixed keys ---
     new_elapsed_times = {}
     for key in elapsed_times:

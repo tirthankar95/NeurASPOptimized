@@ -5,9 +5,10 @@ import sys
 import clingo
 import numpy as np
 import torch
-from mvpp import MVPP
 from torch import nn
 from tqdm import tqdm
+
+from mvpp import MVPP
 
 
 class NeurASP:

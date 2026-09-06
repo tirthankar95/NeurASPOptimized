@@ -1,14 +1,12 @@
 import json
 import os
-import pickle
 import re
 import sys
-
+import torch
+import pickle
 import clingo
 import numpy as np
-import torch
 from tqdm import tqdm
-
 from mvpp_gnew import MVPP
 
 
