@@ -1,11 +1,8 @@
-import os
-
 import torch
 import torchvision
 from torch.utils.data import Dataset
 from torchvision.transforms import transforms
 
-_DIR = os.path.dirname(os.path.abspath(__file__))
 
 class MNIST_Addition(Dataset):
 
@@ -26,8 +23,8 @@ class MNIST_Addition(Dataset):
 
 transform = transforms.Compose([transforms.ToTensor(), transforms.Normalize((0.1307,), (0.3081, ))])
 
-train_dataset = MNIST_Addition(torchvision.datasets.MNIST(root=os.path.join(_DIR, 'data'), train=True, download=True, transform=transform), os.path.join(_DIR, 'data/train_data.txt'))
-test_loader = torch.utils.data.DataLoader(torchvision.datasets.MNIST(os.path.join(_DIR, 'data'), train=False, transform=transform), batch_size=1000, shuffle=True)
+train_dataset = MNIST_Addition(torchvision.datasets.MNIST(root='./data/', train=True, download=True, transform=transform), 'data/train_data.txt')
+test_loader = torch.utils.data.DataLoader(torchvision.datasets.MNIST('./data/', train=False, transform=transform), batch_size=1000, shuffle=True)
 dataList = []
 obsList = []
 for i1, i2, l in train_dataset:

@@ -42,8 +42,6 @@ nnMapping = {'sol': m}
 optimizers = {'sol': torch.optim.Adam(m.parameters(), lr=0.0001)}
 NeurASPobj = NeurASP(dprogram, nnMapping, optimizers, gpu=False)
 
-dataset = list(zip(dataList, obsList))
-
 ########
 # Start training and testing
 ########
@@ -53,7 +51,7 @@ print('Initial test accuracy (whole board): {:0.2f}%\nInitial test accuracy (sin
 for i in range(100):
     print(f'Training for Epoch {i+1}...')
     time1 = time.time()
-    NeurASPobj.learn(dataset, epoch=1, storeSM=False, bar=True, task='solvingSudoku')
+    NeurASPobj.learn(dataList=dataList, obsList=obsList, epoch=1, smPickle='data/stableModels.pickle', bar=True)
     time2 = time.time()
     acc, singleAcc = NeurASPobj.testNN('sol', train_loader)
     print(f'Train Acc (whole board): {acc:0.2f}%')

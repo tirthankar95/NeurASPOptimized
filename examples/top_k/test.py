@@ -46,5 +46,4 @@ m.load_state_dict(torch.load(saveModelPath, map_location='cpu'))
 ########
 # Start testing
 ########
-dataset = list(zip(dataListTest, obsListTest))
-NeurASPobj.testConstraint(dataset, [constraint])
+NeurASPobj.testConstraint(dataListTest, obsListTest,[constraint])

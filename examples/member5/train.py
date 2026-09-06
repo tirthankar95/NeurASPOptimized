@@ -34,21 +34,22 @@ optimizers = {'digit': torch.optim.Adam(m.parameters(), lr=0.001)}
 
 NeurASPobj = NeurASP(dprogram, nnMapping, optimizers)
 
-dataset = list(zip(dataList, obsList))
-
 ########
 # Start training and testing
 ########
 
 # remove the saved models to fairly check total training time
 try:
-    os.remove('saved_models/member5_stable_models.pkl')
+    os.remove('../data/member5_models.pickle')
 except OSError:
     pass
 
-time1 = time.time()
-NeurASPobj.learn(dataset, epoch=3, bar=True, task='member5')
-print('--- total time for training: %s seconds ---' % int(time.time() - time1) )
+for i in range(3):
+    print(f'Epoch {i+1}...')
+    time1 = time.time()
+    NeurASPobj.learn(dataList=dataList, obsList=obsList, epoch=1, smPickle='../data/member5_models.pickle', bar=True)
+    time2 = time.time()
+print('--- total time for training: %s seconds ---' % int(time.time() - startTime) )
 acc, _ = NeurASPobj.testNN('digit', testLoader)
 print(f'Test Acc: {acc:0.2f}%')
 print('--- total time from beginning: %s seconds ---' % int(time.time() - startTime) )

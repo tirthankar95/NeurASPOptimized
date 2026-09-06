@@ -56,7 +56,6 @@ for i1, i2, i3, i4, l in trainDataset:
         })
     obsList.append(f':- not addition({l}).')
 
-dataset = list(zip(dataList, obsList))
 
 #############################
 # NeurASP program
@@ -82,7 +81,7 @@ NeurASPobj = NeurASP(dprogram, nnMapping, optimizers)
 ########
 
 print('Start training for 1 epoch...')
-NeurASPobj.learn(dataset, epoch=1, storeSM=False, bar=True, task='mnistAdd2')
+NeurASPobj.learn(dataList=dataList, obsList=obsList, epoch=1, smPickle=None, bar=True)
 
 device = torch.device('cpu')
 # check testing accuracy

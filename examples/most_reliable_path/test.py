@@ -61,7 +61,6 @@ reachable(X, Y) :- reachable(X, Z), mrp(Z, Y).
 m = FC(40, *[50, 50, 50, 50, 50], 24)
 nnMapping = {'mrp': m}
 NeurASPobj = NeurASP(dprogram+aspProgram, nnMapping, optimizers=None)
-dataset = list(zip(dataListTest, obsListTest))
 
 ########
 # Load pretrained model
@@ -73,4 +72,4 @@ m.load_state_dict(torch.load(saveModelPath, map_location='cpu'))
 ########
 # Start testing
 ########
-NeurASPobj.testConstraint(dataset, mvppList=[aspProgram])
+NeurASPobj.testConstraint(dataList=dataListTest, obsList=obsListTest, mvppList=[aspProgram])
