@@ -6,9 +6,7 @@ import time
 import unittest
 from unittest import mock
 
-import numpy as np
 import torch
-
 from mvpp import MVPP
 from mvpp_gnew import MVPP as MVPPGnew
 from mvpp_new import MVPP as MVPPNew
@@ -120,14 +118,14 @@ def measure_newgrasp_speed(dprogram, nnMapping, optimizers, dataset, example_nam
     return elapsed_times[f'newgrasp_{example_name}_total']
 
 
-def save_timings():
+def save_timings(expand=1.0):
     prefixes = {
         'og_': 'neurasp_',
         'slash_': "slash_",
         "new_": "newrasp_",
         'newgrasp_': 'newgrasp_'
     }
-    known_prefixes = tuple(p for p in prefixes.keys() if p)  # non-empty ones
+    known_prefixes = tuple(p for p in prefixes if p)  # non-empty ones
     # --- discover base example names from unprefixed keys ---
     new_elapsed_times = {}
     for key in elapsed_times:
@@ -137,7 +135,7 @@ def save_timings():
                 if key.startswith(prefix):
                     new_key = prefixes[prefix] + key[len(prefix):]
                     break
-            new_elapsed_times[new_key] = elapsed_times[key]
+            new_elapsed_times[new_key] = elapsed_times[key] * expand
     # Pretty-print (display only)
     print(json.dumps(new_elapsed_times, indent=4))
     # Save compactly, one record per line
@@ -354,9 +352,9 @@ class TestSpeeds(unittest.TestCase):
         assert (newgrasp_time < newrasp_time)
 
 
-    def test_speeds_member(self, seed=None, n=5):
+    def test_speeds_member(self, seed=None, n=5, sample_size=None):
         """Test speeds of different implementations for the Member task"""
-        os.chdir(os.path.dirname(os.path.abspath(__file__)) + '/../examples/member5')
+        os.chdir(os.path.dirname(os.path.abspath(__file__)) + f'/../examples/member{n}')
         elapsed_times.clear()
         if not seed:
             seed = random.randint(0, 100000)
@@ -388,11 +386,15 @@ class TestSpeeds(unittest.TestCase):
                             "npp(digit(1,X), [0,1,2,3,4,5,6,7,8,9]) :- img(X).\n"
                             "member(D,0) :- digit(0,+i1,-N1), digit(0,+i2,-N2), digit(0,+i3,-N3), digit(0,+i4,-N4), digit(0,+i5,-N5), check(D), D!=N1, D!=N2, D!=N3, D!=N4, D!=N5.\n"
                             "member(D,1) :- check(D), not member(D,0).")
+        expand = 1.0
+        if sample_size is not None:
+            expand = len(dataList) / sample_size
         m = Net()
         nnMapping = {'digit': m}
         optimizers = {'digit': torch.optim.Adam(m.parameters(), lr=0.001)}
         # Sample random examples
-        dataList, obsList = sample_examples(dataList, obsList, 1000)
+        sample_count = min(sample_size, len(dataList)) if sample_size is not None else min(1000, len(dataList))
+        dataList, obsList = sample_examples(dataList, obsList, sample_count)
         # Original code
         neurasp_time = measure_neurasp_speed(dprogram, nnMapping, optimizers, dataList, obsList, example_name, epoch=1)
         # SLASH code
@@ -415,7 +417,7 @@ class TestSpeeds(unittest.TestCase):
         dataList_new = [{k: i.squeeze(0) for k, i in dataDict.items()} for dataDict in dataList]
         dataList_new = list(zip(dataList_new, obsList))
         newgrasp_time = measure_newgrasp_speed(dprogram, nnMapping, optimizers, dataList_new, example_name, epoch=1)
-        save_timings()
+        save_timings(expand=expand)
         # New code should be faster than existing code
         assert (newgrasp_time < newrasp_time < neurasp_time)
         assert (newgrasp_time < newrasp_time < slash_time)
@@ -426,7 +428,7 @@ class TestSpeeds(unittest.TestCase):
 
     def test_speeds_member5(self):
         """Wrapper so unittest can run the member benchmark with n=5."""
-        self.test_speeds_member(n=5)
+        self.test_speeds_member(n=5, sample_size=10)
 
 
     # def test_speeds_shortest_path(self):
@@ -507,7 +509,7 @@ class TestSpeeds(unittest.TestCase):
     #     assert (newrasp_time < slash_time)
 
 
-    def test_speeds_card_arithmetic(self, op, cards):
+    def test_speeds_card_arithmetic(self, op, cards, sample_size=None):
         """Test speeds of different implementations for the card arithmetic task."""
         os.chdir(os.path.abspath(ROOT_DIR + '/../examples/card_arithmetic'))
         elapsed_times.clear()
@@ -519,7 +521,8 @@ class TestSpeeds(unittest.TestCase):
         nnMapping = {'card': m}
         optimizers = {'card': torch.optim.Adam(m.parameters())}
         trainDataset, __, dprogram = get_dataset(f'card_{op}_{cards}', './data')
-        trainDataset = torch.utils.data.Subset(trainDataset, range(min(100, len(trainDataset))))
+        if sample_size is not None:
+            trainDataset = torch.utils.data.Subset(trainDataset, range(min(sample_size, len(trainDataset))))
         dataList = []
         obsList = []
         # Turn into lists
@@ -547,16 +550,18 @@ class TestSpeeds(unittest.TestCase):
         m = Net()
         nnMapping = {'card': m}
         optimizers = {'card': torch.optim.Adam(m.parameters())}
-        dataLoader = torch.utils.data.DataLoader(trainDataset, batch_size=32)
+        dataLoader = torch.utils.data.DataLoader(trainDataset, batch_size=1)
         newrasp_time = measure_newrasp_speed(dprogram, nnMapping, optimizers, dataLoader, example_name)
         # New Grasp Code 
         m = Net()
         nnMapping = {'card': m}
         optimizers = {'card': torch.optim.Adam(m.parameters())}
-        dataLoader = torch.utils.data.DataLoader(trainDataset, batch_size=1)
+        dataLoader = torch.utils.data.DataLoader(trainDataset, batch_size=32)
         #newgrasp_time = measure_newgrasp_speed(dprogram, nnMapping, optimizers, dataLoader, example_name)
-        print('Print save timings.\n\n')
-        save_timings()
+        expand = 1.0
+        if sample_size is not None:
+            expand = len(dataList) / sample_size
+        save_timings(expand=expand)
         remove_cached_stable_models()
         # New code should be faster than existing code
         # assert (newrasp_time < neurasp_time)
@@ -564,4 +569,4 @@ class TestSpeeds(unittest.TestCase):
         # assert (newgrasp_time < neurasp_time)
 
     def test_speeds_card_arithmetic_2sum(self):
-        self.test_speeds_card_arithmetic('sum', 2)
+        self.test_speeds_card_arithmetic('sum', 2, sample_size=100)

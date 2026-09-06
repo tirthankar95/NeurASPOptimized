@@ -3,7 +3,6 @@ from unittest import mock
 
 import numpy as np
 import torch
-
 from mvpp import MVPP
 from mvpp_new import MVPP as MVPPNew
 from mvpp_slash import MVPP as MVPPSlash

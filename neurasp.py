@@ -1,15 +1,13 @@
 import pickle
 import re
 import sys
-
+import time
 import clingo
 import numpy as np
 import torch
 from torch import nn
 from tqdm import tqdm
-
 from mvpp import MVPP
-
 
 class NeurASP:
     def __init__(self, dprogram, nnMapping, optimizers, gpu=False):
@@ -262,6 +260,7 @@ class NeurASP:
             self.nnMapping[m].train()
 
         # we train for 'epoch' times of epochs
+        forward_pass = 0
         for epochIdx in range(epoch):
             # for each training instance in the training data
             iterator = enumerate(tqdm(dataList)) if bar else enumerate(dataList)
@@ -285,8 +284,9 @@ class NeurASP:
                         # if data maps t to dataTensor directly
                         else:
                             dataTensor = data[t]
-
+                        _start = time.time()
                         nnOutput[m][t] = self.nnMapping[m](dataTensor.to(self.device))
+                        forward_pass += time.time() - _start
                         nnOutput[m][t] = torch.clamp(nnOutput[m][t], min=10e-8, max=1.-10e-8)
 
                         self.nnOutputs[m][t] = nnOutput[m][t].view(-1).tolist()
@@ -391,6 +391,7 @@ class NeurASP:
                 with open(smPickle, 'wb') as fp:
                     pickle.dump(self.stableModels, fp)
                 savePickle = False
+        print(f'{forward_pass=}')
 
     def testNN(self, nn, testLoader):
         """
