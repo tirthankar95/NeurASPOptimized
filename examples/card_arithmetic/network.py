@@ -4,11 +4,11 @@ from torch import nn
 class Net(nn.Module):
     def __init__(self):
         super().__init__()
-        self.conv1 = nn.Conv2d(3, 64, 3)
-        self.conv2 = nn.Conv2d(64, 64, 3)
-        self.conv3 = nn.Conv2d(64, 128, 3)
-        self.conv4 = nn.Conv2d(128, 128, 3)
-        self.classifier = nn.Conv2d(128, 52, 1)
+        self.conv1 = nn.Conv2d(3, 16, 3)
+        self.conv2 = nn.Conv2d(16, 32, 3)
+        self.conv3 = nn.Conv2d(32, 32, 3)
+        self.conv4 = nn.Conv2d(32, 64, 3)
+        self.classifier = nn.Conv2d(64, 52, 1)
 
         self.pool = nn.AdaptiveAvgPool2d((1, 1))
         self.flatten = nn.Flatten()

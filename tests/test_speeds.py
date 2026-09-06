@@ -136,6 +136,8 @@ def save_timings(expand=1.0):
                     new_key = prefixes[prefix] + key[len(prefix):]
                     break
             new_elapsed_times[new_key] = elapsed_times[key] * expand
+        elif not isinstance(elapsed_times[key], (int, float)):
+            new_elapsed_times[key] = elapsed_times[key]
     # Pretty-print (display only)
     print(json.dumps(new_elapsed_times, indent=4))
     # Save compactly, one record per line
@@ -533,7 +535,7 @@ class TestSpeeds(unittest.TestCase):
             dataList.append({'p': data['p']})
             obsList.append(obs)
         # Original code
-        #neurasp_time = measure_neurasp_speed(dprogram, nnMapping, optimizers, dataList, obsList, example_name, batch_size=32)
+        neurasp_time = measure_neurasp_speed(dprogram, nnMapping, optimizers, dataList, obsList, example_name, batch_size=32)
         # SLASH code
         m = Net()
         nnMapping = {'card': m}
@@ -553,20 +555,24 @@ class TestSpeeds(unittest.TestCase):
         m = Net()
         nnMapping = {'card': m}
         optimizers = {'card': torch.optim.Adam(m.parameters())}
-        dataLoader = torch.utils.data.DataLoader(trainDataset, batch_size=1)
+        dataLoader = torch.utils.data.DataLoader(trainDataset, batch_size=4)
         newrasp_time = measure_newrasp_speed(dprogram, nnMapping, optimizers, dataLoader, example_name)
         # New Grasp Code 
         m = Net()
         nnMapping = {'card': m}
         optimizers = {'card': torch.optim.Adam(m.parameters())}
-        dataLoader = torch.utils.data.DataLoader(trainDataset, batch_size=32)
-        #newgrasp_time = measure_newgrasp_speed(dprogram, nnMapping, optimizers, dataLoader, example_name)
+        dataLoader = torch.utils.data.DataLoader(trainDataset, batch_size=4)
+        newgrasp_time = measure_newgrasp_speed(dprogram, nnMapping, optimizers, dataLoader, example_name)
+        elapsed_times['task'] = f'card_{op}_{cards}'
         save_timings(expand=expand)
         remove_cached_stable_models()
         # New code should be faster than existing code
-        # assert (newrasp_time < neurasp_time)
+        assert (newrasp_time < neurasp_time)
         # assert (newrasp_time < slash_time)
-        # assert (newgrasp_time < neurasp_time)
+        assert (newgrasp_time < neurasp_time)
 
     def test_speeds_card_arithmetic_2sum(self):
-        self.test_speeds_card_arithmetic('sum', 2, sample_size=100)
+        self.test_speeds_card_arithmetic('sum', 2, sample_size=128)
+
+    def test_speeds_card_arithmetic_3sum(self):
+        self.test_speeds_card_arithmetic('sum', 3, sample_size=128)
