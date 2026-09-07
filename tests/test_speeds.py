@@ -430,7 +430,7 @@ class TestSpeeds(unittest.TestCase):
 
     def test_speeds_member5(self):
         """Wrapper so unittest can run the member benchmark with n=5."""
-        self.test_speeds_member(n=5, sample_size=10)
+        self.test_speeds_member(n=5)
 
 
     # def test_speeds_shortest_path(self):
@@ -572,7 +572,7 @@ class TestSpeeds(unittest.TestCase):
         assert (newgrasp_time < neurasp_time)
 
     def test_speeds_card_arithmetic_2sum(self):
-        self.test_speeds_card_arithmetic('sum', 2, sample_size=128)
+        self.test_speeds_card_arithmetic('sum', 2)
 
     def test_speeds_card_arithmetic_3sum(self):
-        self.test_speeds_card_arithmetic('sum', 3, sample_size=128)
+        self.test_speeds_card_arithmetic('sum', 3)
