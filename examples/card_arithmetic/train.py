@@ -59,13 +59,13 @@ optimizers = {'card': torch.optim.Adam(network.parameters(), lr=args.learning_ra
 neurasp_obj = NeurASP(program, neural_mapping, optimizers, gpu=not args.cpu)
 
 neurasp_obj.learn(dataloader, args.epochs, lr=args.learning_rate, accStep = args.checkpoint_freq, seed = seed,
-                  valDataset = val_dataloader, task = f'card_{args.variant}')
+                valDataset = val_dataloader, task = f'card_{args.variant}', bar=True)
 
 dmvpp = MVPP(neurasp_obj.mvpp['program'])
 down_acc, latent_accs = neurasp_obj.calculate_accuracies(test_dataloader, dmvpp)
 print(f"Downstream test accuracy: {down_acc * 100:.2f}%.")
 results = {'algorithm': 'NeurASP', 'dataset': 'CardArithmetic', 'task': f'card_{args.variant}', 'seed': seed, 'epoch': args.epochs, 'step': 0,
-           'batch_size': args.batch_size, 'downstream_test_accuracy': down_acc}
+        'batch_size': args.batch_size, 'downstream_test_accuracy': down_acc}
 for concept in latent_accs:
     results[f'{concept}_lr'] = optimizers[concept].param_groups[0]['lr']
     results[f'{concept}_weight_decay'] = optimizers[concept].param_groups[0]['weight_decay']

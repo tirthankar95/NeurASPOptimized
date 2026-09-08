@@ -391,8 +391,8 @@ class NeurASP:
                 # Calculate and print training accuracy every accStep steps
                 if accStep != 0 and (epochIdx == 0 and dataIdx == 0 or (dataIdx + 1) % accStep == 0):
                     results = {'algorithm': 'NeurASP', 'dataset': dataset_name, 'task': task,
-                               'seed': seed,
-                               'epoch': epochIdx, 'step': dataIdx + 1, 'batch_size': batch_size}
+                            'seed': seed,
+                            'epoch': epochIdx, 'step': dataIdx + 1, 'batch_size': batch_size}
                     print(f"\nEpoch {epochIdx}, step {dataIdx + 1}:")
 
                     for m in self.nnMapping:

@@ -18,7 +18,8 @@ Run these from the project root:
 python3 -m examples.mnistAdd.mnist
 python3 -m examples.member3.train
 python3 -m examples.member5.train
-python3 -m examples.card_arithmetic.train
+python3 -m examples.card_arithmetic.train --image_dir examples/card_arithmetic/data
+python3 -m examples.card_arithmetic.train --image_dir examples/card_arithmetic/data --variant sum_3
 python3 -m examples.add2x2.train
 ```
 

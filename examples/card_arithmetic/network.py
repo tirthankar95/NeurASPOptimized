@@ -1,6 +1,5 @@
 import torch
 
-
 class CardNet(torch.nn.Module):
     def __init__(self):
         """
