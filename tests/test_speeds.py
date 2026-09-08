@@ -404,7 +404,7 @@ class TestSpeeds(unittest.TestCase):
         nnMapping = {'digit': m}
         optimizers = {'digit': torch.optim.Adam(m.parameters(), lr=0.001)}
         dataList_slash = [{f'i{i+1}': dataDict['i'][i] for i in range(n)}for dataDict in dataList]
-        dataListLoader = torch.utils.data.DataLoader(list(zip(dataList_slash, obsList)), batch_size=64)
+        dataListLoader = torch.utils.data.DataLoader(list(zip(dataList_slash, obsList)), batch_size=1)
         slash_time = measure_slash_speed(slash_program, nnMapping, optimizers, dataListLoader, example_name, epoch=1)
         # New code
         m = Net()
