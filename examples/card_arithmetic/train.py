@@ -47,9 +47,9 @@ val_dataloader = torch.utils.data.DataLoader(val_dataset, batch_size=args.batch_
 test_dataloader = torch.utils.data.DataLoader(test_dataset, batch_size=args.batch_size)
 
 network = CardNet()
-with open(current_dir + '/tasks/card_facts.lp') as file:
+with open(current_dir + '/data/card_facts.lp') as file:
     program = file.read()
-with open(current_dir + f'/tasks/card_{args.variant}.lp') as file:
+with open(current_dir + f'/data/card_{args.variant}.lp') as file:
     program += '\n' + file.read()
 
 # The latent concept for each card is a number

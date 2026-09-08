@@ -17,6 +17,8 @@ Run these from the project root:
 ```bash
 python3 -m examples.mnistAdd.mnist
 python3 -m examples.member3.train
+python3 -m examples.member5.train
+python3 -m examples.card_arithmetic.train
 python3 -m examples.add2x2.train
 ```
 

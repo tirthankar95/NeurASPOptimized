@@ -1,17 +1,13 @@
 import os
 import sys
-
 sys.path.append('../../')
 import time
-
 import torch
-from dataGen import dataList, obsList, testLoader
-from network import Net
-
 from neurasp import NeurASP
+from examples.member5.dataGen import dataList, obsList, testLoader
+from examples.member5.network import Net
 
 startTime = time.time()
-
 ######################################
 # The NeurASP program can be written in the scope of ''' Rules '''
 # It can also be written in a file

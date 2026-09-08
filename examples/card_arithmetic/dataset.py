@@ -23,7 +23,7 @@ class CardArithmetic(Dataset):
         else:
             self.image_dir = f'{image_dir}/images_{train_val_test}'
 
-        self.data = pd.read_csv(current_dir + f"/tasks/card_{variant}_{train_val_test}.csv")
+        self.data = pd.read_csv(current_dir + f"/data/card_{variant}_{train_val_test}.csv")
         # Set latent_labels variable
         self.create_latent_dataset()
 
