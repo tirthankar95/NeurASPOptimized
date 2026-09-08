@@ -1,6 +1,6 @@
 import torch
 
-class CardNet(torch.nn.Module):
+class Net(torch.nn.Module):
     def __init__(self):
         """
         Initialize a neural network for processing playing card images
