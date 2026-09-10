@@ -21,3 +21,4 @@
 {"algorithm": "NeurASP", "dataset": "CardArithmetic", "task": "card_sum_3", "seed": 91336, "epoch": 6, "step": 200, "batch_size": 32, "card_lr": 0.0001, "card_weight_decay": 0, "downstream_val_accuracy": 0.911}
 {"algorithm": "NeurASP", "dataset": "CardArithmetic", "task": "card_sum_3", "seed": 91336, "epoch": 6, "step": 300, "batch_size": 32, "card_lr": 0.0001, "card_weight_decay": 0, "downstream_val_accuracy": 0.925}
 {"algorithm": "NeurASP", "dataset": "CardArithmetic", "task": "card_sum_3", "seed": 91336, "epoch": 7, "step": 100, "batch_size": 32, "card_lr": 0.0001, "card_weight_decay": 0, "downstream_val_accuracy": 0.912}
+{"algorithm": "NeurASP", "dataset": "CardArithmetic", "task": "card_sum_3", "seed": 52215, "epoch": 0, "step": 1, "batch_size": 32, "card_lr": 0.0001, "card_weight_decay": 0, "downstream_val_accuracy": 0.001}

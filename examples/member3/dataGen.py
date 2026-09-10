@@ -43,16 +43,12 @@ testLoader = torch.utils.data.DataLoader(
 )
 
 BATCH_SIZE = 50
-
-def collate(batch):
-    i, d, l = zip(*batch)
-    return torch.stack(i), list(d), list(l)
-
-train_loader = torch.utils.data.DataLoader(trainDataset, batch_size=BATCH_SIZE, shuffle=True, collate_fn=collate)
-    
+train_loader = torch.utils.data.DataLoader(trainDataset, batch_size=BATCH_SIZE, shuffle=True)
 dataList = []
 obsList = []
+
 for i, d, l in train_loader:
     dataList.append({'i': i})
-    for di, li in zip(d, l):
-        obsList.append(f':- not member({di},{li}).\ncheck({di}).')
+    # group obs per batch so dataset = zip(dataList, obsList) pairs each batch of
+    # images with the matching list of obs, not a single unrelated obs
+    obsList.append([f':- not member({di},{li}).\ncheck({di}).' for di, li in zip(d, l)])

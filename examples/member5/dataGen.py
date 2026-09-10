@@ -34,8 +34,11 @@ np.random.seed(1) # fix the random seed for reproducibility
 trainDataset = torch.utils.data.Subset(trainDataset, np.random.choice(len(trainDataset), 3000, replace=False))
 testLoader = torch.utils.data.DataLoader(torchvision.datasets.MNIST('../data/', train=False, transform=transform), batch_size=1000, shuffle=True)
 
+BATCH_SIZE = 50
+trainLoader = torch.utils.data.DataLoader(trainDataset, batch_size=BATCH_SIZE, shuffle=True)
 dataList = []
 obsList = []
-for images, d, l in trainDataset:
+
+for images, d, l in trainLoader:
     dataList.append({'i': images})
-    obsList.append(f':- not member({d},{l}).\ncheck({d}).')
+    obsList.append([f':- not member({d[i]},{l[i]}).\ncheck({d[i]}).' for i in range(len(d))])

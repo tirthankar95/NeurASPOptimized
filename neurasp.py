@@ -279,7 +279,7 @@ class NeurASP:
                 # where c is defined in rule #const c=v.
                 '''
                 data = {'p': tensor, ...}
-                data['p'].shape is 32, 2, 3, 274, 174
+                data['p'].shape is (32, 2, 3, 274, 174) card_sum_2
                 '''
                 for key in list(data.keys()):
                     data[self.constReplacement(key)] = data.pop(key)
@@ -319,7 +319,8 @@ class NeurASP:
                     # batch all t's inputs for this nn into a single forward pass
                     # dataTensor may already carry an extra leading batch dim (e.g. shape
                     # batch, group, C, H, W) on top of the group dim (group, C, H, W) that
-                    # gets flattened below, so splitSizes must count rows after flattening
+                    # gets flattened below, so splitSizes must count rows after flattening,
+                    # keeping nnOutputs[m][t] flat as (batch*group, ...) to match b*self.e[m]+i indexing
                     splitSizes = [
                         dataTensor.shape[0] * dataTensor.shape[1] if dataTensor.ndim == 5 else dataTensor.shape[0]
                         for dataTensor in dataTensors
@@ -622,6 +623,10 @@ class NeurASP:
                         if isinstance(data[t], tuple) or isinstance(data[t], list):
                             # The data contains latent labels
                             dataTensor = data[t][0]
+                            # dataTensor may carry an extra group dim (batch, group, C, H, W); flatten it
+                            # into the row dim so nnOutput[m][t] stays flat, matching b*self.e[m]+i indexing
+                            if dataTensor.ndim == 5:
+                                dataTensor = dataTensor.flatten(0, 1)
                             nnOutput[m][t] = self.nnMapping[m](dataTensor.to(self.device)).detach().to('cpu')
 
                             if m in data[t][1]:
@@ -633,6 +638,8 @@ class NeurASP:
 
                         else:
                             dataTensor = data[t]
+                            if dataTensor.ndim == 5:
+                                dataTensor = dataTensor.flatten(0, 1)
                             nnOutput[m][t] = self.nnMapping[m](dataTensor.to(self.device)).detach().to('cpu')
 
                 for b in range(len(obs)):
