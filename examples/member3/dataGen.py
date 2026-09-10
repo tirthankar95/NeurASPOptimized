@@ -42,8 +42,17 @@ testLoader = torch.utils.data.DataLoader(
     shuffle=True
 )
 
+BATCH_SIZE = 50
+
+def collate(batch):
+    i, d, l = zip(*batch)
+    return torch.stack(i), list(d), list(l)
+
+train_loader = torch.utils.data.DataLoader(trainDataset, batch_size=BATCH_SIZE, shuffle=True, collate_fn=collate)
+    
 dataList = []
 obsList = []
-for images, d, l in trainDataset:
-    dataList.append({'i': images})
-    obsList.append(f':- not member({d},{l}).\ncheck({d}).')
+for i, d, l in train_loader:
+    dataList.append({'i': i})
+    for di, li in zip(d, l):
+        obsList.append(f':- not member({di},{li}).\ncheck({di}).')

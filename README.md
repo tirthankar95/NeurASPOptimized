@@ -34,6 +34,8 @@ kill -9 $(lsof -t -i:5678)
 Start training under debugpy:
 
 ```bash
+python3 -m debugpy --listen 5678 --wait-for-client -m examples.mnistAdd.mnist
+python3 -m debugpy --listen 5678 --wait-for-client -m examples.card_arithmetic.train --image_dir examples/card_arithmetic/data
 python3 -m debugpy --listen 5678 --wait-for-client -m examples.member3.train
 python3 -m debugpy --listen 5678 --wait-for-client -m examples.add2x2.train
 ```
