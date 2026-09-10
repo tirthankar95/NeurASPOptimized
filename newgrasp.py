@@ -222,7 +222,7 @@ class NeurASP:
         return dmvpp.find_one_most_probable_SM_under_obs_noWC(obs=obs)
 
     def learn(self, dataset, epoch, lossFunc='semantic', method='exact', lr=0.01, opt=False, storeSM=True, accStep=0,
-              bar=False, seed='unknown', valDataset=None, task='unknown'):
+            bar=False, seed='unknown', valDataset=None, task='unknown'):
         """
         @param dataset: a dataset consisting of inputs and observations,
                         each input is a dict, mapping terms to a tensor,
@@ -238,6 +238,7 @@ class NeurASP:
         @param valDataset: a dataset with validation labels for testing accuracies
         @param task: a string representing the name of the task, used when logging results
         """
+
         # Set info variables for logging
         if hasattr(dataset, 'dataset'):
             # Dataset is a dataloader
@@ -256,7 +257,7 @@ class NeurASP:
             try:
                 with open(f'saved_models/{task}_stable_models.pkl', 'rb') as fp:
                     self.stableModels = pickle.load(fp)
-                    print('Using cached stable model file.')
+                print("Using cached stable model file.")
             except FileNotFoundError:
                 savePickle = True
         bestDownAcc = 0
@@ -276,20 +277,36 @@ class NeurASP:
             for dataIdx, (data, obs) in iterator:
                 # data is a dictionary. we need to edit its key if the key contains a defined const c
                 # where c is defined in rule #const c=v.
+                '''
+                data = {'p': tensor, ...}
+                data['p'].shape is (32, 2, 3, 274, 174) card_sum_2
+                '''
                 for key in list(data.keys()):
                     data[self.constReplacement(key)] = data.pop(key)
 
                 # Put obs in list if data is unbatched
+                '''
+                obs = (':- not result(62).', ':- not result(63).')
+                '''
                 if isinstance(obs, str):
                     obs = [obs]
 
                 # Step 1: get the output of each neural network and initialize the gradients
                 nnOutput = {}
                 latentLabels = {}
+                batchedOutputs = {}  # the un-split forward output per nn, used for a single backward() call
+                rowOffsets = {}  # row (in batchedOutputs[m]) at which each t's slice starts
+                '''
+                self.nnOutputs = {'card': {'p': None}}
+                
+                '''
                 for m in self.nnOutputs:
                     nnOutput[m] = {}
                     latentLabels[m] = {}
-                    for t in self.nnOutputs[m]:
+                    rowOffsets[m] = {}
+                    ts = list(self.nnOutputs[m])
+                    dataTensors = []
+                    for t in ts:
                         # if data maps t to tuple (dataTensor, {'m': labelTensor})
                         if isinstance(data[t], tuple) or isinstance(data[t], list):
                             dataTensor = data[t][0]
@@ -298,15 +315,31 @@ class NeurASP:
                         # if data maps t to dataTensor directly
                         else:
                             dataTensor = data[t]
-
-                        nnOutput[m][t] = self.nnMapping[m](dataTensor.to(self.device))
-                        if nnOutput[m][t].dim() > 1:
-                            nnOutput[m][t] = nnOutput[m][t].reshape(-1, nnOutput[m][t].shape[-1])
-                        nnOutput[m][t] = torch.clamp(nnOutput[m][t], min=10e-8, max=1. - 10e-8)
-
-                        self.nnOutputs[m][t] = nnOutput[m][t].detach().to('cpu')
-                        # initialize the semantic gradients for each output
-                        self.nnGradients[m][t] = [0.0 for i in self.nnOutputs[m][t]]
+                        dataTensors.append(dataTensor)
+                    # batch all t's inputs for this nn into a single forward pass
+                    # dataTensor may already carry an extra leading batch dim (e.g. shape
+                    # batch, group, C, H, W) on top of the group dim (group, C, H, W) that
+                    # gets flattened below, so splitSizes must count rows after flattening,
+                    # keeping nnOutputs[m][t] flat as (batch*group, ...) to match b*self.e[m]+i indexing
+                    splitSizes = [
+                        dataTensor.shape[0] * dataTensor.shape[1] if dataTensor.ndim == 5 else dataTensor.shape[0]
+                        for dataTensor in dataTensors
+                    ]
+                    batchedInput = torch.cat(dataTensors, dim=0).to(self.device)
+                    if batchedInput.ndim == 5:
+                        batchedInput = batchedInput.flatten(0, 1)
+                    batchedOutput = self.nnMapping[m](batchedInput)
+                    batchedOutput = torch.clamp(batchedOutput, min=10e-8, max=1. - 10e-8)
+                    batchedOutputs[m] = batchedOutput
+                    # gradients are written directly into this flat tensor, row by row, so no
+                    # re-splitting/concatenation is needed before the single backward() call below
+                    self.nnGradients[m] = torch.zeros_like(batchedOutput)
+                    offset = 0
+                    for t, size, out in zip(ts, splitSizes, torch.split(batchedOutput, splitSizes, dim=0)):
+                        nnOutput[m][t] = out
+                        self.nnOutputs[m][t] = out.detach().to('cpu')
+                        rowOffsets[m][t] = offset
+                        offset += size
 
                 if lossFunc == 'semantic':
                     for b in range(len(obs)):
@@ -336,6 +369,7 @@ class NeurASP:
                             gradients = dmvpp.mvppLearn(models)
                         else:
                             if method == 'exact':
+                                # [TM] Probabilistic gradients are computed here for the discrete component.
                                 gradients = dmvpp.gradients_one_obs(obs[b], opt=opt)
                             elif method == 'sampling':
                                 models = dmvpp.sample_obs(obs[b], num=10)
@@ -346,33 +380,39 @@ class NeurASP:
                         # Update parameters in neural networks
                         for ruleIdx in range(self.mvpp['nnPrRuleNum']):
                             m, i, t, j = self.mvpp['nnProb'][ruleIdx][0]
-                            if gradients[ruleIdx].size() == self.nnOutputs[m][t][i].size():
-                                self.nnGradients[m][t][b*self.e[m]+i] = -gradients[ruleIdx]
-                            else:
+                            row = rowOffsets[m][t] + b*self.e[m] + i
+                            if gradients[ruleIdx].size() == self.nnGradients[m][row].size():
+                                self.nnGradients[m][row] = -gradients[ruleIdx]
+                            else: # Handles binary n=1 cases
                                 # Neural net output shape does not match gradient shape
                                 # This is the case for binary predictions, so we only take the first entry of each gradient
-                                self.nnGradients[m][t][b*self.e[m]+i] = -gradients[ruleIdx][0]
+                                self.nnGradients[m][row] = -gradients[ruleIdx][0]
 
-                    # Backpropagate calculated gradients
+                    # Backpropagate calculated gradients: one backward() call per nn on its batched
+                    # (un-split) output, since backward() on multiple split views of the same tensor
+                    # would try to traverse the shared split node's graph more than once
                     for m in nnOutput:
-                        for t in nnOutput[m]:
-                            nnOutput[m][t].backward(torch.stack(self.nnGradients[m][t]).to(self.device))
+                        batchedOutputs[m].backward(self.nnGradients[m].to(self.device))
                 else:
-                    # We use fully supervised loss with latent labels
+                    # We use fully supervised loss with latent labels; accumulate into one loss per nn
+                    # so backward() is only called once per nn's batched output
                     for m in latentLabels:
+                        losses = []
                         for t in latentLabels[m]:
                             if isinstance(lossFunc, str):
                                 if lossFunc == 'cross':
                                     criterion = torch.nn.NLLLoss()
-                                    loss = criterion(torch.log(nnOutput[m][t].view(-1, self.n[m])),
-                                                     latentLabels[m][t].long().view(-1))
+                                    losses.append(criterion(torch.log(nnOutput[m][t].view(-1, self.n[m])),
+                                                    latentLabels[m][t].long().view(-1)))
                             else:
-                                loss = lossFunc(nnOutput[m][t].view(-1, self.n[m]), latentLabels[m][t])
-                            loss.backward()
+                                losses.append(lossFunc(nnOutput[m][t].view(-1, self.n[m]), latentLabels[m][t]))
+                        if losses:
+                            torch.stack(losses).sum().backward()
 
-                # Update the parameters
-                self.optimizers[m].step()
-                self.optimizers[m].zero_grad()
+                # Update the parameters for every network, not just the last one seen above
+                for m in self.nnMapping:
+                    self.optimizers[m].step()
+                    self.optimizers[m].zero_grad()
 
                 # If using semantic loss, we update probabilities in normal prob. rules
                 if lossFunc == 'semantic':
@@ -389,8 +429,8 @@ class NeurASP:
                 # Calculate and print training accuracy every accStep steps
                 if accStep != 0 and (epochIdx == 0 and dataIdx == 0 or (dataIdx + 1) % accStep == 0):
                     results = {'algorithm': 'NeurASP', 'dataset': dataset_name, 'task': task,
-                               'seed': seed,
-                               'epoch': epochIdx, 'step': dataIdx + 1, 'batch_size': batch_size}
+                                'seed': seed,
+                                'epoch': epochIdx, 'step': dataIdx + 1, 'batch_size': batch_size}
                     print(f"\nEpoch {epochIdx}, step {dataIdx + 1}:")
 
                     for m in self.nnMapping:
@@ -584,6 +624,10 @@ class NeurASP:
                         if isinstance(data[t], tuple) or isinstance(data[t], list):
                             # The data contains latent labels
                             dataTensor = data[t][0]
+                            # dataTensor may carry an extra group dim (batch, group, C, H, W); flatten it
+                            # into the row dim so nnOutput[m][t] stays flat, matching b*self.e[m]+i indexing
+                            if dataTensor.ndim == 5:
+                                dataTensor = dataTensor.flatten(0, 1)
                             nnOutput[m][t] = self.nnMapping[m](dataTensor.to(self.device)).detach().to('cpu')
 
                             if m in data[t][1]:
@@ -595,6 +639,8 @@ class NeurASP:
 
                         else:
                             dataTensor = data[t]
+                            if dataTensor.ndim == 5:
+                                dataTensor = dataTensor.flatten(0, 1)
                             nnOutput[m][t] = self.nnMapping[m](dataTensor.to(self.device)).detach().to('cpu')
 
                 for b in range(len(obs)):
@@ -613,7 +659,7 @@ class NeurASP:
                             dmvpp.parameters[ruleIdx] = nnOutput[m][t][b*self.e[m]+i]
                             if len(dmvpp.parameters[ruleIdx].size()) == 0:
                                 dmvpp.parameters[ruleIdx] = torch.Tensor([dmvpp.parameters[ruleIdx],
-                                                                          1 - dmvpp.parameters[ruleIdx]])
+                                                                        1 - dmvpp.parameters[ruleIdx]])
                                 probs.append(int(nnOutput[m][t][b*self.e[m]+i] < 0.5))
                             else:
                                 probs.append(nnOutput[m][t][b*self.e[m]+i].argmax())
@@ -630,11 +676,9 @@ class NeurASP:
                 latentAccuracies[m] /= numLatentLabels[m]
             else:
                 latentAccuracies[m] = 'unknown'
-
         if hasattr(dataset, 'dataset'):
             # Dataset is a dataloader
             dataset_len = len(dataset.dataset)
         else:
             dataset_len = len(dataset)
-
         return downstreamAccuracy/dataset_len, latentAccuracies

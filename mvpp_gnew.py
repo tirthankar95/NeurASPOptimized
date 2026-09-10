@@ -151,7 +151,7 @@ class MVPP:
     def model_to_network_preds(self, m):
         # Extract network predictions from stable model
         m = str(m).split(' ')
-        network_preds = [0 for _ in m]
+        network_preds = [0 for _ in self.pc]
         for atom in m:
             split_list = atom.split('(')
             concept_name = split_list[0]

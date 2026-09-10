@@ -1,3 +1,5 @@
+import os
+
 import numpy as np
 import torch
 import torchvision
@@ -23,14 +25,20 @@ class MNIST_Member(Dataset):
         return torch.cat((self.dataset[i1][0], self.dataset[i2][0], self.dataset[i3][0], self.dataset[i4][0], self.dataset[i5][0]), 0).unsqueeze(1), d, l
 
 transform = transforms.Compose([transforms.ToTensor(), transforms.Normalize((0.1307,), (0.3081, ))])
-trainDataset = MNIST_Member(torchvision.datasets.MNIST(root='../data/', train=True, download=True, transform=transform), '../data/member5_train.txt')
+_BASE_DIR = os.path.dirname(__file__)
+_DATA_DIR = os.path.abspath(os.path.join(_BASE_DIR, '..', 'data'))
+_MEMBER5_TRAIN = os.path.join(_DATA_DIR, 'member5_train.txt')
+trainDataset = MNIST_Member(torchvision.datasets.MNIST(root='../data/', train=True, download=True, transform=transform), _MEMBER5_TRAIN)
 # only randomly take 3000 data
 np.random.seed(1) # fix the random seed for reproducibility
 trainDataset = torch.utils.data.Subset(trainDataset, np.random.choice(len(trainDataset), 3000, replace=False))
 testLoader = torch.utils.data.DataLoader(torchvision.datasets.MNIST('../data/', train=False, transform=transform), batch_size=1000, shuffle=True)
 
+BATCH_SIZE = 50
+trainLoader = torch.utils.data.DataLoader(trainDataset, batch_size=BATCH_SIZE, shuffle=True)
 dataList = []
 obsList = []
-for images, d, l in trainDataset:
+
+for images, d, l in trainLoader:
     dataList.append({'i': images})
-    obsList.append(f':- not member({d},{l}).\ncheck({d}).')
+    obsList.append([f':- not member({d[i]},{l[i]}).\ncheck({d[i]}).' for i in range(len(d))])

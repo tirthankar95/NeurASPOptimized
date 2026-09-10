@@ -22,14 +22,6 @@ class Net(nn.Module):
         )
 
     def forward(self, x):
-        if x.dim() == 5:
-            batch_size, num_digits, channels, height, width = x.shape
-            x = x.reshape(batch_size * num_digits, channels, height, width)
-            x = self.encoder(x)
-            x = x.view(x.size(0), -1)
-            x = self.classifier(x)
-            return x.view(batch_size * num_digits, -1)
-
         x = self.encoder(x)
         x = x.view(-1, 16 * 4 * 4)
         x = self.classifier(x)

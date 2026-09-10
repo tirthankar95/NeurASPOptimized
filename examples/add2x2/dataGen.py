@@ -28,6 +28,12 @@ trainDataset = torch.utils.data.Subset(trainDataset, np.random.choice(len(trainD
 testLoader = torch.utils.data.DataLoader(torchvision.datasets.MNIST('../data/', train=False, transform=transform), batch_size=1000, shuffle=True)
 dataList = []
 obsList = []
+BATCH_SIZE = 50
+trainDataset = torch.utils.data.DataLoader(
+    trainDataset, 
+    batch_size=BATCH_SIZE, 
+    shuffle=True
+)
 for images, r1, r2, c1, c2 in trainDataset:
     dataList.append({'i': images})
-    obsList.append(f':- not add2x2({r1},{r2},{c1},{c2}).')
+    obsList.append([f':- not add2x2({r1},{r2},{c1},{c2}).' for r1, r2, c1, c2 in zip(r1, r2, c1, c2)])

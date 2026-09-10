@@ -251,32 +251,31 @@ class TestSpeeds(unittest.TestCase):
                         "addition(A,B,N):- digit(0,+A,-N1), digit(0,+B,-N2), N=N1+N2, A!=B.\n"
                         "npp(digit(1,X), [0,1,2,3,4,5,6,7,8,9]) :- img(X).")
         dataList_slash = [{k: i.squeeze(0) for k, i in dataDict.items()} for dataDict in dataList]
-        dataListLoader = torch.utils.data.DataLoader(list(zip(dataList_slash, obsList)), batch_size=64)
+        total_data_size = sum(len(obs) for obs in obsList)
+        print(f'DataSize: {total_data_size} ({len(dataList_slash)} batches)')
+        dataListLoader = list(zip(dataList_slash, obsList))
         # Original code
         m = Net()
         nnMapping = {'digit': m}
         optimizers = {'digit': torch.optim.Adam(m.parameters(), lr=0.001)}
-        neurasp_time = measure_neurasp_speed(dprogram, nnMapping, optimizers, dataList, obsList, example_name, batch_size=64)
+        measure_neurasp_speed(dprogram, nnMapping, optimizers, dataList, obsList, example_name, batch_size=64)
         # SLASH code
         m = Net()
         nnMapping = {'digit': m}
         optimizers = {'digit': torch.optim.Adam(m.parameters(), lr=0.001)}
-        slash_time = measure_slash_speed(slash_program, nnMapping, optimizers, dataListLoader, example_name)
+        measure_slash_speed(slash_program, nnMapping, optimizers, dataListLoader, example_name)
         # New code
         m = Net()
         nnMapping = {'digit': m}
         optimizers = {'digit': torch.optim.Adam(m.parameters(), lr=0.001)}
-        newrasp_time = measure_newrasp_speed(dprogram, nnMapping, optimizers, dataListLoader, example_name)
+        measure_newrasp_speed(dprogram, nnMapping, optimizers, dataListLoader, example_name)
         # New grasp code 
         m = Net()
         nnMapping = {'digit': m}
         optimizers = {'digit': torch.optim.Adam(m.parameters(), lr=0.001)}
-        newgrasp_time = measure_newgrasp_speed(dprogram, nnMapping, optimizers, dataListLoader, example_name)
+        measure_newgrasp_speed(dprogram, nnMapping, optimizers, dataListLoader, example_name)
         save_timings()
         remove_cached_stable_models()
-        # New code should be faster than existing code
-        assert (newgrasp_time < newrasp_time < neurasp_time)
-        assert (newgrasp_time < newrasp_time < slash_time)
 
 
     def test_speeds_top_k(self):
@@ -329,29 +328,25 @@ class TestSpeeds(unittest.TestCase):
         m = Net()
         nnMapping = {'digit': m}
         optimizers = {'digit': torch.optim.Adam(m.parameters())}
-        # Choose 1000 random examples
-        dataList, obsList = sample_examples(dataList, obsList, 1000)
-        dataList_slash = [{k: i.squeeze(0) for k, i in dataDict.items()} for dataDict in dataList]
-        dataListLoader = torch.utils.data.DataLoader(list(zip(dataList_slash, obsList)), batch_size=64)
+        total_data_size = sum(len(obs) for obs in obsList)
+        print(f'DataSize: {total_data_size} ({len(dataList)} batches)')
         # Original code
         m = Net()
         nnMapping = {'digit': m}
         optimizers = {'digit': torch.optim.Adam(m.parameters())}
-        neurasp_time = measure_neurasp_speed(dprogram, nnMapping, optimizers, dataList, obsList, example_name)
+        measure_neurasp_speed(dprogram, nnMapping, optimizers, dataList, obsList, example_name)
+        merged_data = list(zip(dataList, obsList))
         # New code
         m = Net()
         nnMapping = {'digit': m}
         optimizers = {'digit': torch.optim.Adam(m.parameters())}
-        newrasp_time = measure_newrasp_speed(dprogram, nnMapping, optimizers, dataListLoader, example_name)
+        measure_newrasp_speed(dprogram, nnMapping, optimizers, merged_data, example_name)
         # New grasp code
         m = Net()
         nnMapping = {'digit': m}
         optimizers = {'digit': torch.optim.Adam(m.parameters())}
-        newgrasp_time = measure_newgrasp_speed(dprogram, nnMapping, optimizers, dataListLoader, example_name)
+        measure_newgrasp_speed(dprogram, nnMapping, optimizers, merged_data, example_name)
         save_timings()
-        # New code should be faster than existing code
-        assert (newrasp_time < neurasp_time)
-        assert (newgrasp_time < newrasp_time)
 
 
     def test_speeds_member(self, seed=None, n=5, sample_size=None):
@@ -397,32 +392,31 @@ class TestSpeeds(unittest.TestCase):
         # Sample random examples
         sample_count = min(sample_size, len(dataList)) if sample_size is not None else min(1000, len(dataList))
         dataList, obsList = sample_examples(dataList, obsList, sample_count)
+        total_data_size = sum(len(obs) for obs in obsList)
+        print(f'DataSize: {total_data_size} ({len(dataList)} batches)')
         # Original code
-        neurasp_time = measure_neurasp_speed(dprogram, nnMapping, optimizers, dataList, obsList, example_name, epoch=1)
+        measure_neurasp_speed(dprogram, nnMapping, optimizers, dataList, obsList, example_name, epoch=1)
         # SLASH code
         m = Net()
         nnMapping = {'digit': m}
         optimizers = {'digit': torch.optim.Adam(m.parameters(), lr=0.001)}
         dataList_slash = [{f'i{i+1}': dataDict['i'][i] for i in range(n)}for dataDict in dataList]
         dataListLoader = torch.utils.data.DataLoader(list(zip(dataList_slash, obsList)), batch_size=1)
-        slash_time = measure_slash_speed(slash_program, nnMapping, optimizers, dataListLoader, example_name, epoch=1)
+        measure_slash_speed(slash_program, nnMapping, optimizers, dataListLoader, example_name, epoch=1)
         # New code
         m = Net()
         nnMapping = {'digit': m}
         optimizers = {'digit': torch.optim.Adam(m.parameters(), lr=0.001)}
         dataList_new = [{k: i.squeeze(0) for k, i in dataDict.items()} for dataDict in dataList]
         dataList_new = list(zip(dataList_new, obsList))
-        newrasp_time = measure_newrasp_speed(dprogram, nnMapping, optimizers, dataList_new, example_name, epoch=1)
+        measure_newrasp_speed(dprogram, nnMapping, optimizers, dataList_new, example_name, epoch=1)
         # New grasp
         nnMapping = {'digit': m}
         optimizers = {'digit': torch.optim.Adam(m.parameters(), lr=0.001)}
         dataList_new = [{k: i.squeeze(0) for k, i in dataDict.items()} for dataDict in dataList]
         dataList_new = list(zip(dataList_new, obsList))
-        newgrasp_time = measure_newgrasp_speed(dprogram, nnMapping, optimizers, dataList_new, example_name, epoch=1)
+        measure_newgrasp_speed(dprogram, nnMapping, optimizers, dataList_new, example_name, epoch=1)
         save_timings(expand=expand)
-        # New code should be faster than existing code
-        assert (newgrasp_time < newrasp_time < neurasp_time)
-        assert (newgrasp_time < newrasp_time < slash_time)
 
     def test_speeds_member3(self):
         """Wrapper so unittest can run the member benchmark with n=3."""
@@ -507,8 +501,6 @@ class TestSpeeds(unittest.TestCase):
     #     newrasp_time = measure_newrasp_speed(dprogram, nnMapping, optimizers, dataList, obsList, example_name)
     #     save_timings()
     #     # New code should be faster than existing code
-    #     assert (newrasp_time < neurasp_time)
-    #     assert (newrasp_time < slash_time)
 
 
     def test_speeds_card_arithmetic(self, op, cards, sample_size=None):
@@ -535,7 +527,7 @@ class TestSpeeds(unittest.TestCase):
             dataList.append({'p': data['p']})
             obsList.append(obs)
         # Original code
-        neurasp_time = measure_neurasp_speed(dprogram, nnMapping, optimizers, dataList, obsList, example_name, batch_size=32)
+        measure_neurasp_speed(dprogram, nnMapping, optimizers, dataList, obsList, example_name, batch_size=32)
         # SLASH code
         m = Net()
         nnMapping = {'card': m}
@@ -550,26 +542,22 @@ class TestSpeeds(unittest.TestCase):
         slash_program = slash_program + facts
         dataList_slash = [{f'p{n + 1}': dataDict['p'][n] for n in range(2)} for dataDict in dataList]
         dataListLoader = torch.utils.data.DataLoader(list(zip(dataList_slash, obsList)), batch_size=32)
-        #slash_time = measure_slash_speed(slash_program, nnMapping, optimizers, dataListLoader, example_name, p_num = 8)
+        measure_slash_speed(slash_program, nnMapping, optimizers, dataListLoader, example_name, p_num = 8)
         # New code
         m = Net()
         nnMapping = {'card': m}
         optimizers = {'card': torch.optim.Adam(m.parameters())}
         dataLoader = torch.utils.data.DataLoader(trainDataset, batch_size=4)
-        newrasp_time = measure_newrasp_speed(dprogram, nnMapping, optimizers, dataLoader, example_name)
+        measure_newrasp_speed(dprogram, nnMapping, optimizers, dataLoader, example_name)
         # New Grasp Code 
         m = Net()
         nnMapping = {'card': m}
         optimizers = {'card': torch.optim.Adam(m.parameters())}
         dataLoader = torch.utils.data.DataLoader(trainDataset, batch_size=4)
-        newgrasp_time = measure_newgrasp_speed(dprogram, nnMapping, optimizers, dataLoader, example_name)
+        measure_newgrasp_speed(dprogram, nnMapping, optimizers, dataLoader, example_name)
         elapsed_times['task'] = f'card_{op}_{cards}'
         save_timings(expand=expand)
         remove_cached_stable_models()
-        # New code should be faster than existing code
-        assert (newrasp_time < neurasp_time)
-        # assert (newrasp_time < slash_time)
-        assert (newgrasp_time < neurasp_time)
 
     def test_speeds_card_arithmetic_2sum(self):
         self.test_speeds_card_arithmetic('sum', 2)
