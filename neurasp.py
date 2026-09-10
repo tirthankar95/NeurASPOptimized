@@ -383,7 +383,7 @@ class NeurASP:
                             row = rowOffsets[m][t] + b*self.e[m] + i
                             if gradients[ruleIdx].size() == self.nnGradients[m][row].size():
                                 self.nnGradients[m][row] = -gradients[ruleIdx]
-                            else:
+                            else: # Handles binary n=1 cases
                                 # Neural net output shape does not match gradient shape
                                 # This is the case for binary predictions, so we only take the first entry of each gradient
                                 self.nnGradients[m][row] = -gradients[ruleIdx][0]
@@ -409,9 +409,10 @@ class NeurASP:
                         if losses:
                             torch.stack(losses).sum().backward()
 
-                # Update the parameters
-                self.optimizers[m].step()
-                self.optimizers[m].zero_grad()
+                # Update the parameters for every network, not just the last one seen above
+                for m in self.nnMapping:
+                    self.optimizers[m].step()
+                    self.optimizers[m].zero_grad()
 
                 # If using semantic loss, we update probabilities in normal prob. rules
                 if lossFunc == 'semantic':
