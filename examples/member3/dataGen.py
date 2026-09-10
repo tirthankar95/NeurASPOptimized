@@ -42,8 +42,13 @@ testLoader = torch.utils.data.DataLoader(
     shuffle=True
 )
 
+BATCH_SIZE = 50
+train_loader = torch.utils.data.DataLoader(trainDataset, batch_size=BATCH_SIZE, shuffle=True)
 dataList = []
 obsList = []
-for images, d, l in trainDataset:
-    dataList.append({'i': images})
-    obsList.append(f':- not member({d},{l}).\ncheck({d}).')
+
+for i, d, l in train_loader:
+    dataList.append({'i': i})
+    # group obs per batch so dataset = zip(dataList, obsList) pairs each batch of
+    # images with the matching list of obs, not a single unrelated obs
+    obsList.append([f':- not member({di},{li}).\ncheck({di}).' for di, li in zip(d, l)])

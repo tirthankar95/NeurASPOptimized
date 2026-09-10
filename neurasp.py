@@ -1,14 +1,12 @@
 import json
 import os
-import pickle
 import re
 import sys
-
+import torch
+import pickle
 import clingo
 import numpy as np
-import torch
 from tqdm import tqdm
-
 from mvpp import MVPP
 
 
@@ -27,25 +25,25 @@ class NeurASP:
                 self.device = torch.device('cuda')
             elif torch.backends.mps.is_available():
                 self.device = torch.device('mps')
-        print(f"Device: {self.device}")
+        print('Device: ', self.device)
 
         self.dprogram = dprogram
-        self.const = {} # the mapping from c to v for rule #const c=v.
-        self.n = {} # the mapping from nn name to an integer n denoting the domain size; n would be 1 or N (>=3); note that n=2 in theorey is implemented as n=1
-        self.e = {} # the mapping from nn name to an integer e
-        self.domain = {} # the mapping from nn name to the domain of the predicate in that nn atom
-        self.normalProbs = None # record the probabilities from normal prob rules
+        self.const = {}  # the mapping from c to v for rule #const c=v.
+        self.n = {}  # the mapping from nn name to an integer n denoting the domain size; n would be 1 or N (>=3); note that n=2 in theorey is implemented as n=1
+        self.e = {}  # the mapping from nn name to an integer e
+        self.domain = {}  # the mapping from nn name to the domain of the predicate in that nn atom
+        self.normalProbs = None  # record the probabilities from normal prob rules
         self.nnOutputs = {}
         self.nnGradients = {}
         self.nnMapping = nnMapping
         self.optimizers = optimizers
-        # self.mvpp is a dictionary consisting of 4 keys: 
+        # self.mvpp is a dictionary consisting of 4 keys:
         # 1. 'program': a string denoting an MVPP program where the probabilistic rules generated from NN are followed by other rules;
         # 2. 'nnProb': a list of lists of tuples, each tuple is of the form (model, i ,term, j)
         # 3. 'atom': a list of list of atoms, where each list of atoms is corresponding to a prob. rule
         # 4. 'nnPrRuleNum': an integer denoting the number of probabilistic rules generated from NN
         self.mvpp = {'nnProb': [], 'atom': [], 'nnPrRuleNum': 0, 'program': ''}
-        self.yoloInfo = [] # (beta version; used when e="yolo") a list for yolo neural network to make prediction, each element is of the form [m, t, domain]
+        self.yoloInfo = []  # (beta version; used when e="yolo") a list for yolo neural network to make prediction, each element is of the form [m, t, domain]
         self.mvpp['program'], self.mvpp['program_pr'], self.mvpp['program_asp'] = self.parse(obs='')
         self.stableModels = {}  # a dictionary of stable models, indexed by observations
 
@@ -68,7 +66,7 @@ class NeurASP:
         regex = r'^nn\((.+)\((.+)\),\((.+)\)\)$'
         out = re.search(regex, nnAtom)
         m = out.group(1)
-        e, t = out.group(2).split(',', 1) # in case t is of the form t1,...,tk, we only split on the first comma
+        e, t = out.group(2).split(',', 1)  # in case t is of the form t1,...,tk, we only split on the first comma
         domain = out.group(3).split(',')
         t = self.constReplacement(t)
         # check the value of e
@@ -116,14 +114,13 @@ class NeurASP:
                         rule += f'@0.0 {m}({i}, {t}, {domain[j]}); '
                         prob.append(tuple((m, i, t, j)))
                         atoms.append(atom)
-                    mvppRules.append(rule[:-2]+'.')
+                    mvppRules.append(rule[:-2] + '.')
                     self.mvpp['nnProb'].append(prob)
                     self.mvpp['atom'].append(atoms)
                     self.mvpp['nnPrRuleNum'] += 1
             else:
                 print('Error: the number of element in the domain %s is less than 2' % domain)
         return mvppRules
-
 
     def parse(self, obs=''):
         dprogram = self.dprogram + obs
@@ -154,7 +151,6 @@ class NeurASP:
         lines = [line.strip() for line in dprogram.split('\n') if line and not line.startswith('nn(')]
         return '\n'.join(mvppRules + lines), '\n'.join(mvppRules), '\n'.join(lines)
 
-
     @staticmethod
     def satisfy(model, asp):
         """
@@ -173,7 +169,6 @@ class NeurASP:
             return True
         return False
 
-        
     def infer(self, dataDic, obs='', mvpp='', postProcessing=None):
         """
         @param dataDic: a dictionary that maps terms to tensors/np-arrays
@@ -203,7 +198,7 @@ class NeurASP:
                             if label in self.domain[m]:
                                 facts += f'box({t}, b{idx}, {x1}, {y1}, {x2}, {y2}).\n'
                                 atom = f'{m}({t}, b{idx}, {label})'
-                                mvppRules += f'@{conf} {atom}; @{1-conf} -{atom}.\n'
+                                mvppRules += f'@{conf} {atom}; @{1 - conf} -{atom}.\n'
                     else:
                         print('Error: the function for postProcessing yolo output is not specified.')
                         sys.exit()
@@ -212,9 +207,10 @@ class NeurASP:
 
         # Step 3: turn the NN outputs (from usual classification neurual networks) into a set of MVPP probabilistic rules
         for ruleIdx in range(self.mvpp['nnPrRuleNum']):
-            probs = [self.nnOutputs[m][t][i*self.n[m]+j] for (m, i, t, j) in self.mvpp['nnProb'][ruleIdx]]
+            probs = [self.nnOutputs[m][t][i * self.n[m] + j] for (m, i, t, j) in self.mvpp['nnProb'][ruleIdx]]
             if len(probs) == 1:
-                mvppRules += '@{} {}; @{} {}.\n'.format(probs[0], self.mvpp['atom'][ruleIdx][0], 1 - probs[0], self.mvpp['atom'][ruleIdx][1])
+                mvppRules += '@{} {}; @{} {}.\n'.format(probs[0], self.mvpp['atom'][ruleIdx][0], 1 - probs[0],
+                                                        self.mvpp['atom'][ruleIdx][1])
             else:
                 tmp = ''
                 for atomIdx, prob in enumerate(probs):
@@ -281,20 +277,36 @@ class NeurASP:
             for dataIdx, (data, obs) in iterator:
                 # data is a dictionary. we need to edit its key if the key contains a defined const c
                 # where c is defined in rule #const c=v.
+                '''
+                data = {'p': tensor, ...}
+                data['p'].shape is (32, 2, 3, 274, 174) card_sum_2
+                '''
                 for key in list(data.keys()):
                     data[self.constReplacement(key)] = data.pop(key)
 
                 # Put obs in list if data is unbatched
+                '''
+                obs = (':- not result(62).', ':- not result(63).')
+                '''
                 if isinstance(obs, str):
                     obs = [obs]
 
                 # Step 1: get the output of each neural network and initialize the gradients
                 nnOutput = {}
                 latentLabels = {}
+                batchedOutputs = {}  # the un-split forward output per nn, used for a single backward() call
+                rowOffsets = {}  # row (in batchedOutputs[m]) at which each t's slice starts
+                '''
+                self.nnOutputs = {'card': {'p': None}}
+                
+                '''
                 for m in self.nnOutputs:
                     nnOutput[m] = {}
                     latentLabels[m] = {}
-                    for t in self.nnOutputs[m]:
+                    rowOffsets[m] = {}
+                    ts = list(self.nnOutputs[m])
+                    dataTensors = []
+                    for t in ts:
                         # if data maps t to tuple (dataTensor, {'m': labelTensor})
                         if isinstance(data[t], tuple) or isinstance(data[t], list):
                             dataTensor = data[t][0]
@@ -303,11 +315,31 @@ class NeurASP:
                         # if data maps t to dataTensor directly
                         else:
                             dataTensor = data[t]
-                        nnOutput[m][t] = self.nnMapping[m](dataTensor.to(self.device))
-                        nnOutput[m][t] = torch.clamp(nnOutput[m][t], min=10e-8, max=1. - 10e-8)
-                        self.nnOutputs[m][t] = nnOutput[m][t].detach().to('cpu')
-                        # initialize the semantic gradients for each output
-                        self.nnGradients[m][t] = [0.0 for i in self.nnOutputs[m][t]]
+                        dataTensors.append(dataTensor)
+                    # batch all t's inputs for this nn into a single forward pass
+                    # dataTensor may already carry an extra leading batch dim (e.g. shape
+                    # batch, group, C, H, W) on top of the group dim (group, C, H, W) that
+                    # gets flattened below, so splitSizes must count rows after flattening,
+                    # keeping nnOutputs[m][t] flat as (batch*group, ...) to match b*self.e[m]+i indexing
+                    splitSizes = [
+                        dataTensor.shape[0] * dataTensor.shape[1] if dataTensor.ndim == 5 else dataTensor.shape[0]
+                        for dataTensor in dataTensors
+                    ]
+                    batchedInput = torch.cat(dataTensors, dim=0).to(self.device)
+                    if batchedInput.ndim == 5:
+                        batchedInput = batchedInput.flatten(0, 1)
+                    batchedOutput = self.nnMapping[m](batchedInput)
+                    batchedOutput = torch.clamp(batchedOutput, min=10e-8, max=1. - 10e-8)
+                    batchedOutputs[m] = batchedOutput
+                    # gradients are written directly into this flat tensor, row by row, so no
+                    # re-splitting/concatenation is needed before the single backward() call below
+                    self.nnGradients[m] = torch.zeros_like(batchedOutput)
+                    offset = 0
+                    for t, size, out in zip(ts, splitSizes, torch.split(batchedOutput, splitSizes, dim=0)):
+                        nnOutput[m][t] = out
+                        self.nnOutputs[m][t] = out.detach().to('cpu')
+                        rowOffsets[m][t] = offset
+                        offset += size
 
                 if lossFunc == 'semantic':
                     for b in range(len(obs)):
@@ -348,33 +380,39 @@ class NeurASP:
                         # Update parameters in neural networks
                         for ruleIdx in range(self.mvpp['nnPrRuleNum']):
                             m, i, t, j = self.mvpp['nnProb'][ruleIdx][0]
-                            if gradients[ruleIdx].size() == self.nnOutputs[m][t][i].size():
-                                self.nnGradients[m][t][b*self.e[m]+i] = -gradients[ruleIdx]
-                            else:
+                            row = rowOffsets[m][t] + b*self.e[m] + i
+                            if gradients[ruleIdx].size() == self.nnGradients[m][row].size():
+                                self.nnGradients[m][row] = -gradients[ruleIdx]
+                            else: # Handles binary n=1 cases
                                 # Neural net output shape does not match gradient shape
                                 # This is the case for binary predictions, so we only take the first entry of each gradient
-                                self.nnGradients[m][t][b*self.e[m]+i] = -gradients[ruleIdx][0]
+                                self.nnGradients[m][row] = -gradients[ruleIdx][0]
 
-                    # Backpropagate calculated gradients
+                    # Backpropagate calculated gradients: one backward() call per nn on its batched
+                    # (un-split) output, since backward() on multiple split views of the same tensor
+                    # would try to traverse the shared split node's graph more than once
                     for m in nnOutput:
-                        for t in nnOutput[m]:
-                            nnOutput[m][t].backward(torch.stack(self.nnGradients[m][t]).to(self.device))
+                        batchedOutputs[m].backward(self.nnGradients[m].to(self.device))
                 else:
-                    # We use fully supervised loss with latent labels
+                    # We use fully supervised loss with latent labels; accumulate into one loss per nn
+                    # so backward() is only called once per nn's batched output
                     for m in latentLabels:
+                        losses = []
                         for t in latentLabels[m]:
                             if isinstance(lossFunc, str):
                                 if lossFunc == 'cross':
                                     criterion = torch.nn.NLLLoss()
-                                    loss = criterion(torch.log(nnOutput[m][t].view(-1, self.n[m])),
-                                                    latentLabels[m][t].long().view(-1))
+                                    losses.append(criterion(torch.log(nnOutput[m][t].view(-1, self.n[m])),
+                                                    latentLabels[m][t].long().view(-1)))
                             else:
-                                loss = lossFunc(nnOutput[m][t].view(-1, self.n[m]), latentLabels[m][t])
-                            loss.backward()
+                                losses.append(lossFunc(nnOutput[m][t].view(-1, self.n[m]), latentLabels[m][t]))
+                        if losses:
+                            torch.stack(losses).sum().backward()
 
-                # Update the parameters
-                self.optimizers[m].step()
-                self.optimizers[m].zero_grad()
+                # Update the parameters for every network, not just the last one seen above
+                for m in self.nnMapping:
+                    self.optimizers[m].step()
+                    self.optimizers[m].zero_grad()
 
                 # If using semantic loss, we update probabilities in normal prob. rules
                 if lossFunc == 'semantic':
@@ -391,8 +429,8 @@ class NeurASP:
                 # Calculate and print training accuracy every accStep steps
                 if accStep != 0 and (epochIdx == 0 and dataIdx == 0 or (dataIdx + 1) % accStep == 0):
                     results = {'algorithm': 'NeurASP', 'dataset': dataset_name, 'task': task,
-                            'seed': seed,
-                            'epoch': epochIdx, 'step': dataIdx + 1, 'batch_size': batch_size}
+                                'seed': seed,
+                                'epoch': epochIdx, 'step': dataIdx + 1, 'batch_size': batch_size}
                     print(f"\nEpoch {epochIdx}, step {dataIdx + 1}:")
 
                     for m in self.nnMapping:
@@ -447,7 +485,7 @@ class NeurASP:
     def testNN(self, nn, testLoader):
         """
         Return a real number in [0,100] denoting accuracy
-        @nn is the name of the neural network to check the accuracy. 
+        @nn is the name of the neural network to check the accuracy.
         @testLoader is the input and output pairs.
         """
         self.nnMapping[nn].eval()
@@ -461,11 +499,12 @@ class NeurASP:
             for data, target in testLoader:
                 output = self.nnMapping[nn](data.to(self.device))
                 if target.shape == output.shape[:-1]:
-                    pred = output.argmax(dim=-1) # get the index of the max value
+                    pred = output.argmax(dim=-1)  # get the index of the max value
                 elif target.shape == output.shape:
                     pred = (output >= 0.5).int()
                 else:
-                    print(f'Error: none considered case for output with shape {output.shape} v.s. label with shape {target.shape}')
+                    print(
+                        f'Error: none considered case for output with shape {output.shape} v.s. label with shape {target.shape}')
                     sys.exit()
                 target = target.to(self.device).view_as(pred)
                 correctionMatrix = (target.int() == pred.int()).view(target.shape[0], -1)
@@ -509,7 +548,7 @@ class NeurASP:
             self.nnMapping[func].eval()
 
         # we count the correct prediction for each mvpp program
-        count = [0]*len(mvppList)
+        count = [0] * len(mvppList)
 
         for data, obs in dataset:
             # data is a dictionary. we need to edit its key if the key contains a defined const c
@@ -525,9 +564,9 @@ class NeurASP:
             # Step 2: turn the NN outputs into a set of ASP facts
             aspFacts = ''
             for ruleIdx in range(self.mvpp['nnPrRuleNum']):
-                probs = [self.nnOutputs[m][t][i*self.n[model]+j] for (m, i, t, j) in self.mvpp['nnProb'][ruleIdx]]
+                probs = [self.nnOutputs[m][t][i * self.n[model] + j] for (m, i, t, j) in self.mvpp['nnProb'][ruleIdx]]
                 if len(probs) == 1:
-                    atomIdx = int(probs[0] < 0.5) # t is of index 0 and f is of index 1
+                    atomIdx = int(probs[0] < 0.5)  # t is of index 0 and f is of index 1
                 else:
                     atomIdx = probs.index(max(probs))
                 aspFacts += self.mvpp['atom'][ruleIdx][atomIdx] + '.\n'
@@ -575,8 +614,8 @@ class NeurASP:
             for data, obs in dataset:
                 for key in list(data.keys()):
                     data[self.constReplacement(key)] = data.pop(key)
-                    if isinstance(obs, str):
-                        obs = [obs]
+                if isinstance(obs, str):
+                    obs = [obs]
 
                 nnOutput = {}
                 for m in self.nnOutputs:
@@ -585,6 +624,10 @@ class NeurASP:
                         if isinstance(data[t], tuple) or isinstance(data[t], list):
                             # The data contains latent labels
                             dataTensor = data[t][0]
+                            # dataTensor may carry an extra group dim (batch, group, C, H, W); flatten it
+                            # into the row dim so nnOutput[m][t] stays flat, matching b*self.e[m]+i indexing
+                            if dataTensor.ndim == 5:
+                                dataTensor = dataTensor.flatten(0, 1)
                             nnOutput[m][t] = self.nnMapping[m](dataTensor.to(self.device)).detach().to('cpu')
 
                             if m in data[t][1]:
@@ -596,6 +639,8 @@ class NeurASP:
 
                         else:
                             dataTensor = data[t]
+                            if dataTensor.ndim == 5:
+                                dataTensor = dataTensor.flatten(0, 1)
                             nnOutput[m][t] = self.nnMapping[m](dataTensor.to(self.device)).detach().to('cpu')
 
                 for b in range(len(obs)):
@@ -631,11 +676,9 @@ class NeurASP:
                 latentAccuracies[m] /= numLatentLabels[m]
             else:
                 latentAccuracies[m] = 'unknown'
-
         if hasattr(dataset, 'dataset'):
             # Dataset is a dataloader
             dataset_len = len(dataset.dataset)
         else:
             dataset_len = len(dataset)
-
-        return downstreamAccuracy / dataset_len, latentAccuracies
+        return downstreamAccuracy/dataset_len, latentAccuracies
