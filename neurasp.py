@@ -2,12 +2,15 @@ import pickle
 import re
 import sys
 import time
+
 import clingo
 import numpy as np
 import torch
 from torch import nn
 from tqdm import tqdm
+
 from mvpp import MVPP
+
 
 class NeurASP:
     def __init__(self, dprogram, nnMapping, optimizers, gpu=False):

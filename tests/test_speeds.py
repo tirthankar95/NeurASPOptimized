@@ -1,4 +1,3 @@
-import glob
 import json
 import os
 import random
@@ -7,24 +6,14 @@ import unittest
 from unittest import mock
 
 import torch
+
 from mvpp import MVPP
-from mvpp_gnew import MVPP as MVPPGnew
-from mvpp_new import MVPP as MVPPNew
 from mvpp_slash import MVPP as MVPPSlash
 from neurasp import NeurASP
-from newgrasp import NeurASP as NewGraspASP
-from newrasp import NeurASP as NewrASP
 from slash import SLASH
 
 elapsed_times = {}
 ROOT_DIR = os.path.dirname(os.path.abspath(__file__))
-
-
-def remove_cached_stable_models():
-    """Remove all cached stable-model pickle files in the current working directory."""
-    for cache_file in glob.glob(os.path.join('saved_models', '*.pkl')):
-        if os.path.isfile(cache_file):
-            os.remove(cache_file)
 
 
 def time_method(class_obj, method_name, elapsed_times_key):
@@ -88,56 +77,24 @@ def measure_slash_speed(dprogram, nnMapping, optimizers, dataListLoader, example
         return elapsed_times[f'slash_{example_name}_total']
 
 
-def measure_newrasp_speed(dprogram, nnMapping, optimizers, dataset, example_name, opt=False, epoch=1, gpu=False):
-    """Measure the speed of the new implementation of NeurASP for an example."""
-    NewrASPobj = NewrASP(dprogram, nnMapping, optimizers,gpu=gpu)
-    with (mock.patch.object(MVPPNew, 'find_k_SM_under_obs',
-                            time_method(MVPPNew, 'find_k_SM_under_obs', f'new_{example_name}_model')),
-        mock.patch.object(MVPPNew, 'prob_of_interpretation',
-                            time_method(MVPPNew, 'prob_of_interpretation', f'new_{example_name}_prob')),
-        mock.patch.object(MVPPNew, 'mvppLearnRule',
-                            time_method(MVPPNew, 'mvppLearnRule', f'new_{example_name}_grad'))):
-        start_time = time.perf_counter()
-        NewrASPobj.learn(dataset, epoch=epoch, opt=opt, storeSM=True, bar=True)
-    elapsed_times[f'new_{example_name}_total'] = time.perf_counter() - start_time
-    return elapsed_times[f'new_{example_name}_total']
-
-
-def measure_newgrasp_speed(dprogram, nnMapping, optimizers, dataset, example_name, opt=False, epoch=1, gpu=False):
-    """Measure the speed of the new GRASP implementation of NeurASP for an example."""
-    NewGraspASPobj = NewGraspASP(dprogram, nnMapping, optimizers,gpu=gpu)
-    with (mock.patch.object(MVPPGnew, 'find_k_SM_under_obs',
-                            time_method(MVPPGnew, 'find_k_SM_under_obs', f'newgrasp_{example_name}_model')),
-        mock.patch.object(MVPPGnew, 'prob_of_interpretation',
-                            time_method(MVPPGnew, 'prob_of_interpretation', f'newgrasp_{example_name}_prob')),
-        mock.patch.object(MVPPGnew, 'mvppLearnRule',
-                            time_method(MVPPGnew, 'mvppLearnRule', f'newgrasp_{example_name}_grad'))):
-        start_time = time.perf_counter()
-        NewGraspASPobj.learn(dataset, epoch=epoch, opt=opt, storeSM=True, bar=True)
-    elapsed_times[f'newgrasp_{example_name}_total'] = time.perf_counter() - start_time
-    return elapsed_times[f'newgrasp_{example_name}_total']
-
-
 def save_timings(expand=1.0):
     prefixes = {
         'og_': 'neurasp_',
         'slash_': "slash_",
-        "new_": "newrasp_",
-        'newgrasp_': 'newgrasp_'
     }
     known_prefixes = tuple(p for p in prefixes if p)  # non-empty ones
     # --- discover base example names from unprefixed keys ---
     new_elapsed_times = {}
-    for key in elapsed_times:
+    for key, value in elapsed_times.items():
         if key.startswith(known_prefixes):
             new_key = ''
             for prefix in known_prefixes:
                 if key.startswith(prefix):
                     new_key = prefixes[prefix] + key[len(prefix):]
                     break
-            new_elapsed_times[new_key] = elapsed_times[key] * expand
-        elif not isinstance(elapsed_times[key], (int, float)):
-            new_elapsed_times[key] = elapsed_times[key]
+            new_elapsed_times[new_key] = value * expand
+        elif not isinstance(value, (int, float)):
+            new_elapsed_times[key] = value
     # Pretty-print (display only)
     print(json.dumps(new_elapsed_times, indent=4))
     # Save compactly, one record per line
@@ -145,92 +102,6 @@ def save_timings(expand=1.0):
         fo.write(json.dumps(new_elapsed_times) + '\n')
 
 class TestSpeeds(unittest.TestCase):
-
-    # def test_speed_synthetic(self, num_models=1000, num_inputs=20, num_concepts=40, seed=None):
-    #     if not seed:
-    #         seed = random.randint(0, 100000)
-    #     torch.manual_seed(seed)
-    #     random.seed(seed)
-    #     print(f"\nSynthetic speed test with {num_models} models, {num_inputs} inputs and {num_concepts} concepts.")
-    #     models_new = torch.randint(0, num_concepts, (num_models, num_inputs))
-    #     models = [[f"test(i{idx},{value})" for idx, value in enumerate(model)] for model in models_new]
-    #     model_idx_list = [[(idx, value) for idx, value in enumerate(model)] for model in models_new]
-    #     pc = [[f"test(i{image},{value})" for value in range(num_concepts)] for image in range(num_inputs)]
-    #     parameters = np.random.random_sample((num_inputs, num_concepts)).tolist()
-    #     selection_mask = torch.tensor([[True for _ in range(num_concepts)] for _ in range(num_inputs)])
-    #     mock_return = (pc, parameters, False, "mock_asp", "mock_pi", "mock_remain_probs")
-    #     mock_return_new = (pc, [torch.Tensor(parameter) for parameter in parameters],
-    #                     [[True for _ in range(num_concepts)] for _ in range(num_inputs)], "mock_asp", "mock_pi",
-    #                     "mock_remain_probs")
-    #     with (mock.patch.object(MVPP, 'parse', return_value=mock_return),
-    #         mock.patch.object(MVPP, 'normalize_probs')):
-    #         mvpp = MVPP('')
-    #         start_time = time.perf_counter()
-    #         probs = [mvpp.prob_of_interpretation(model) for model in models]
-    #         neurasp_prob_time = time.perf_counter() - start_time
-    #         [mvpp.mvppLearnRule(ruleIdx, models, probs) for ruleIdx in range(num_inputs)]
-    #         neurasp_grad_time = time.perf_counter() - neurasp_prob_time - start_time
-    #     with mock.patch.object(MVPPSlash, 'parse', return_value=mock_return + ([],)):
-    #         mvpp_slash = MVPPSlash('')
-    #         mvpp_slash.max_n = num_concepts
-    #         mvpp_slash.M = torch.tensor(parameters)
-    #         # mvpp_slash.M = torch.tensor(parameters, device=torch.device('mps'))
-    #         mvpp_slash.binary_rule_belongings = {}
-    #         mvpp_slash.selection_mask = selection_mask
-    #         # mvpp_slash.selection_mask = selection_mask.to(torch.device('mps'))
-    #         start_time = time.perf_counter()
-    #         probs = []
-    #         for i in range(len(models)):
-    #             probs.append(mvpp_slash.prob_of_interpretation(models[i], model_idx_list[i]))
-    #         slash_prob_time = time.perf_counter() - start_time
-    #         mvpp_slash.mvppLearnRule(models, model_idx_list, 'cpu', torch.tensor(probs))
-    #         # mvpp_slash.mvppLearnRule(models, model_idx_list, 'mps', torch.tensor(probs, device=torch.device('mps')))
-    #         slash_grad_time = time.perf_counter() - slash_prob_time - start_time
-    #     with (mock.patch.object(MVPPNew, 'parse', return_value=mock_return_new),
-    #         mock.patch.object(MVPPNew, 'normalize_probs')):
-    #         mvpp_new = MVPPNew('')
-    #         start_time = time.perf_counter()
-    #         probs = mvpp_new.prob_of_interpretation(models_new)
-    #         newrasp_prob_time = time.perf_counter() - start_time
-    #         mvpp_new.mvppLearnRule(models_new, torch.Tensor(probs), num_concepts)
-    #         newrasp_grad_time = time.perf_counter() - newrasp_prob_time - start_time
-    #     print(f"Old prob time: {neurasp_prob_time}")
-    #     print(f"SLASH prob time: {slash_prob_time}")
-    #     print(f"New prob time: {newrasp_prob_time}")
-    #     print("==========")
-    #     print(f"Old grad time: {neurasp_grad_time}")
-    #     print(f"SLASH grad time: {slash_grad_time}")
-    #     print(f"New grad time: {newrasp_grad_time}")
-    #     timings = {'task': 'synthetic', 'seed': seed, 'num_models': num_models, 'num_concepts': num_concepts,
-    #             'num_inputs': num_inputs, 'neurasp_prob_time': neurasp_prob_time,
-    #             'slash_prob_time': slash_prob_time, 'newrasp_prob_time': newrasp_prob_time,
-    #             'neurasp_grad_time': neurasp_grad_time, 'slash_grad_time': slash_grad_time,
-    #             'newrasp_grad_time': newrasp_grad_time}
-    #     with open('timings.jsonl', 'a') as f:
-    #         f.write(json.dumps(timings) + "\n")
-    #     assert (newrasp_prob_time + newrasp_grad_time < neurasp_prob_time + neurasp_grad_time)
-    #     assert (newrasp_prob_time + newrasp_grad_time < slash_prob_time + slash_grad_time)
-
-
-    # def test_speeds_synthetic(self):
-    #     """Test speeds of different implementations of probability and gradient calculations with synthetic data"""
-    #     for _ in range(5):
-    #         self.test_speed_synthetic(100, 10, 10)
-    #         self.test_speed_synthetic(1000, 10, 10)
-    #         self.test_speed_synthetic(10000, 10, 10)
-    #         self.test_speed_synthetic(100000, 10, 10)
-    #         self.test_speed_synthetic(1000000, 10, 10)
-    #         self.test_speed_synthetic(100, 10, 10)
-    #         self.test_speed_synthetic(100, 100, 10)
-    #         self.test_speed_synthetic(100, 1000, 10)
-    #         self.test_speed_synthetic(100, 10000, 10)
-    #         self.test_speed_synthetic(100, 100000, 10)
-    #         self.test_speed_synthetic(100, 10, 10)
-    #         self.test_speed_synthetic(100, 10, 100)
-    #         self.test_speed_synthetic(100, 10, 1000)
-    #         self.test_speed_synthetic(100, 10, 10000)
-    #         self.test_speed_synthetic(100, 10, 100000)
-
 
     def test_speeds_mnist_add(self, seed=None):
         """Test speeds of different implementations for the MNIST Addition task"""
@@ -256,63 +127,14 @@ class TestSpeeds(unittest.TestCase):
         m = Net()
         nnMapping = {'digit': m}
         optimizers = {'digit': torch.optim.Adam(m.parameters(), lr=0.001)}
-        neurasp_time = measure_neurasp_speed(dprogram, nnMapping, optimizers, dataList, obsList, example_name, batch_size=64)
+        measure_neurasp_speed(dprogram, nnMapping, optimizers, dataList, obsList, example_name, batch_size=64)
         # SLASH code
         m = Net()
         nnMapping = {'digit': m}
         optimizers = {'digit': torch.optim.Adam(m.parameters(), lr=0.001)}
-        slash_time = measure_slash_speed(slash_program, nnMapping, optimizers, dataListLoader, example_name)
-        # New code
-        m = Net()
-        nnMapping = {'digit': m}
-        optimizers = {'digit': torch.optim.Adam(m.parameters(), lr=0.001)}
-        newrasp_time = measure_newrasp_speed(dprogram, nnMapping, optimizers, dataListLoader, example_name)
-        # New grasp code 
-        m = Net()
-        nnMapping = {'digit': m}
-        optimizers = {'digit': torch.optim.Adam(m.parameters(), lr=0.001)}
-        newgrasp_time = measure_newgrasp_speed(dprogram, nnMapping, optimizers, dataListLoader, example_name)
+        measure_slash_speed(slash_program, nnMapping, optimizers, dataListLoader, example_name)
+        elapsed_times['task'] = f'mnist_add'
         save_timings()
-        remove_cached_stable_models()
-        # New code should be faster than existing code
-        assert (newgrasp_time < newrasp_time < neurasp_time)
-        assert (newgrasp_time < newrasp_time < slash_time)
-
-
-    def test_speeds_top_k(self):
-            """Test speeds of different implementations for the Top Knapsack task"""
-            os.chdir(os.path.abspath(ROOT_DIR + '/../examples/top_k'))
-            from examples.top_k.dataGen import dataList, obsList
-            from examples.top_k.network import FC
-            print("\nTop Knapsack speed test")
-            example_name = 'top_k'
-            dprogram = ("nn(in(10, k), [true, false]).\n"
-                        "% define maxweight k\n"
-                        "#const k = 7.\n"
-                        ":- #sum{1, I : in(I,k,true)} > k.")
-            m = FC(10, 50, 50, 50, 50, 50, 10)
-            nnMapping = {'in': m}
-            optimizers = {'in': torch.optim.Adam(m.parameters(), lr=0.001)}
-            # Choose 1000 random examples
-            dataList, obsList = sample_examples(dataList, obsList, 1000)
-            dataListLoader = torch.utils.data.DataLoader(list(zip(dataList, obsList)), batch_size=64)
-            # Original code
-            m = FC(10, 50, 50, 50, 50, 50, 10)
-            nnMapping = {'in': m}
-            optimizers = {'in': torch.optim.Adam(m.parameters(), lr=0.001)}
-            neurasp_time = measure_neurasp_speed(dprogram, nnMapping, optimizers, dataList, obsList, example_name)
-            # New code
-            m = FC(10, 50, 50, 50, 50, 50, 10)
-            nnMapping = {'in': m}
-            optimizers = {'in': torch.optim.Adam(m.parameters(), lr=0.001)}
-            newrasp_time = measure_newrasp_speed(dprogram, nnMapping, optimizers, dataListLoader, example_name)
-            # New grasp code
-            m = FC(10, 50, 50, 50, 50, 50, 10)
-            nnMapping = {'in': m}
-            optimizers = {'in': torch.optim.Adam(m.parameters(), lr=0.001)}
-            newgrasp_time = measure_newgrasp_speed(dprogram, nnMapping, optimizers, dataListLoader, example_name)
-            save_timings()
-            assert (newgrasp_time < newrasp_time < neurasp_time)
 
 
     def test_speeds_add2x2(self):
@@ -326,32 +148,37 @@ class TestSpeeds(unittest.TestCase):
         dprogram = ("nn(digit(4,i), [0,1,2,3,4,5,6,7,8,9]).\n"
                     "add2x2(R1,R2,C1,C2) :- digit(0,i,N1), digit(1,i,N2), digit(2,i,N3), digit(3,i,N4), "
                     "R1=N1+N2, R2=N3+N4, C1=N1+N3, C2=N2+N4.")
+        slash_program = (
+            "npp(digit(4,i), [0,1,2,3,4,5,6,7,8,9]).\n"
+            "add2x2(R1,R2,C1,C2) :- "
+            "digit(0,+i,-N1), "
+            "digit(1,+i,-N2), "
+            "digit(2,+i,-N3), "
+            "digit(3,+i,-N4), "
+            "R1=N1+N2, "
+            "R2=N3+N4, "
+            "C1=N1+N3, "
+            "C2=N2+N4."
+        )
         m = Net()
         nnMapping = {'digit': m}
         optimizers = {'digit': torch.optim.Adam(m.parameters())}
         # Choose 1000 random examples
         dataList, obsList = sample_examples(dataList, obsList, 1000)
-        dataList_slash = [{k: i.squeeze(0) for k, i in dataDict.items()} for dataDict in dataList]
-        dataListLoader = torch.utils.data.DataLoader(list(zip(dataList_slash, obsList)), batch_size=64)
         # Original code
         m = Net()
         nnMapping = {'digit': m}
         optimizers = {'digit': torch.optim.Adam(m.parameters())}
-        neurasp_time = measure_neurasp_speed(dprogram, nnMapping, optimizers, dataList, obsList, example_name)
-        # New code
+        measure_neurasp_speed(dprogram, nnMapping, optimizers, dataList, obsList, example_name)
+        # SLASH code
         m = Net()
         nnMapping = {'digit': m}
-        optimizers = {'digit': torch.optim.Adam(m.parameters())}
-        newrasp_time = measure_newrasp_speed(dprogram, nnMapping, optimizers, dataListLoader, example_name)
-        # New grasp code
-        m = Net()
-        nnMapping = {'digit': m}
-        optimizers = {'digit': torch.optim.Adam(m.parameters())}
-        newgrasp_time = measure_newgrasp_speed(dprogram, nnMapping, optimizers, dataListLoader, example_name)
+        optimizers = {'digit': torch.optim.Adam(m.parameters(), lr=0.001)}
+        dataList_slash = [{k: i.squeeze(0) for k, i in dataDict.items()} for dataDict in dataList]
+        dataListLoader = torch.utils.data.DataLoader(list(zip(dataList_slash, obsList)), batch_size=64)
+        measure_slash_speed(slash_program, nnMapping, optimizers, dataListLoader, example_name, epoch=1)
+        elapsed_times['task'] = f'add2x2'
         save_timings()
-        # New code should be faster than existing code
-        assert (newrasp_time < neurasp_time)
-        assert (newgrasp_time < newrasp_time)
 
 
     def test_speeds_member(self, seed=None, n=5, sample_size=None):
@@ -398,31 +225,16 @@ class TestSpeeds(unittest.TestCase):
         sample_count = min(sample_size, len(dataList)) if sample_size is not None else min(1000, len(dataList))
         dataList, obsList = sample_examples(dataList, obsList, sample_count)
         # Original code
-        neurasp_time = measure_neurasp_speed(dprogram, nnMapping, optimizers, dataList, obsList, example_name, epoch=1)
+        measure_neurasp_speed(dprogram, nnMapping, optimizers, dataList, obsList, example_name, epoch=1)
         # SLASH code
         m = Net()
         nnMapping = {'digit': m}
         optimizers = {'digit': torch.optim.Adam(m.parameters(), lr=0.001)}
         dataList_slash = [{f'i{i+1}': dataDict['i'][i] for i in range(n)}for dataDict in dataList]
         dataListLoader = torch.utils.data.DataLoader(list(zip(dataList_slash, obsList)), batch_size=64)
-        slash_time = measure_slash_speed(slash_program, nnMapping, optimizers, dataListLoader, example_name, epoch=1)
-        # New code
-        m = Net()
-        nnMapping = {'digit': m}
-        optimizers = {'digit': torch.optim.Adam(m.parameters(), lr=0.001)}
-        dataList_new = [{k: i.squeeze(0) for k, i in dataDict.items()} for dataDict in dataList]
-        dataList_new = list(zip(dataList_new, obsList))
-        newrasp_time = measure_newrasp_speed(dprogram, nnMapping, optimizers, dataList_new, example_name, epoch=1)
-        # New grasp
-        nnMapping = {'digit': m}
-        optimizers = {'digit': torch.optim.Adam(m.parameters(), lr=0.001)}
-        dataList_new = [{k: i.squeeze(0) for k, i in dataDict.items()} for dataDict in dataList]
-        dataList_new = list(zip(dataList_new, obsList))
-        newgrasp_time = measure_newgrasp_speed(dprogram, nnMapping, optimizers, dataList_new, example_name, epoch=1)
+        measure_slash_speed(slash_program, nnMapping, optimizers, dataListLoader, example_name, epoch=1)
+        elapsed_times['task'] = f'member{n}'
         save_timings(expand=expand)
-        # New code should be faster than existing code
-        assert (newgrasp_time < newrasp_time < neurasp_time)
-        assert (newgrasp_time < newrasp_time < slash_time)
 
     def test_speeds_member3(self):
         """Wrapper so unittest can run the member benchmark with n=3."""
@@ -431,85 +243,6 @@ class TestSpeeds(unittest.TestCase):
     def test_speeds_member5(self):
         """Wrapper so unittest can run the member benchmark with n=5."""
         self.test_speeds_member(n=5, sample_size=10)
-
-
-    # def test_speeds_shortest_path(self):
-    #     """Test speeds of different implementations for the Shortest Path task"""
-    #     os.chdir(os.path.abspath(ROOT_DIR + '/../examples/shortest_path'))
-    #     elapsed_times.clear()
-    #     from examples.shortest_path.dataGen import dataList, obsList
-    #     from examples.shortest_path.network import FC
-    #     print("\nShortest path speed test")
-    #     example_name = 'shortest_path'
-    #     dprogram = ("nn(sp(24, g), [true, false]).\n"
-    #                 "sp(X) :- sp(X,g,true).\n"
-    #                 "sp(0,1) :- sp(0). sp(1,2) :- sp(1). sp(2,3) :- sp(2). sp(4,5) :- sp(3). sp(5,6) :- sp(4).\n"
-    #                 "sp(6,7) :- sp(5). sp(8,9) :- sp(6). sp(9,10) :- sp(7). sp(10,11) :- sp(8). sp(12,13) :- sp(9).\n" 
-    #                 "sp(13,14) :- sp(10). sp(14,15) :- sp(11). sp(0,4) :- sp(12). sp(4,8) :- sp(13).\n"
-    #                 "sp(8,12) :- sp(14). sp(1,5) :- sp(15). sp(5,9) :- sp(16). sp(9,13) :- sp(17). sp(2,6) :- sp(18).\n"
-    #                 "sp(6,10) :- sp(19). sp(10,14) :- sp(20). sp(3,7) :- sp(21). sp(7,11) :- sp(22).\n" 
-    #                 "sp(11,15) :- sp(23). sp(X,Y) :- sp(Y,X).\n"
-    #                 "mistake :- X=0..15, #count{Y: sp(X,Y)} = 1. mistake :- X=0..15, #count{Y: sp(X,Y)} >= 3.\n"
-    #                 "reachable(X, Y) :- sp(X, Y). reachable(X, Y) :- reachable(X, Z), sp(Z, Y).\n"
-    #                 "mistake :- sp(X, _), sp(Y, _), not reachable(X, Y).\n"
-    #                 ":~ sp(X). [1, X]")
-    #     m = FC(40, 50, 50, 50, 50, 50, 24)
-    #     nnMapping = {'sp': m}
-    #     optimizers = {'sp': torch.optim.Adam(m.parameters())}
-    #     # Choose 500 random examples
-    #     dataList, obsList = sample_examples(dataList, obsList, 500)
-    #     # Original code
-    #     neurasp_time = measure_neurasp_speed(dprogram, nnMapping, optimizers, dataList, obsList, example_name, opt=True)
-    #     # New code
-    #     newrasp_time = measure_newrasp_speed(dprogram, nnMapping, optimizers, dataList, obsList, example_name, opt=True)
-    #     save_timings()
-    #     # New code should be faster than existing code
-    #     assert (newrasp_time < neurasp_time)
-
-
-    # def test_speeds_follow_suit(self):
-    #     """Test speeds of different implementations for Follow Suit task.
-    #     WARNING: This test takes hours to complete!"""
-    #     os.chdir(os.path.abspath(ROOT_DIR + '/../examples/follow_suit'))
-    #     elapsed_times.clear()
-    #     from examples.follow_suit.dataGen import (
-    #         dataList,
-    #         dprogram,
-    #         facts,
-    #         obsList,
-    #         rules,
-    #     )
-    #     from examples.follow_suit.network import Net
-    #     print("\nFollow suit speed test")
-    #     print("WARNING: This test typically takes hours to complete.")
-    #     example_name = 'follow_suit'
-    #     m = Net()
-    #     nnMapping = {'card': m}
-    #     optimizers = {'card': torch.optim.Adam(m.parameters())}
-    #     # Choose 1 random example
-    #     dataList, obsList = sample_examples(dataList, obsList, 1)
-    #     # Original code
-    #     neurasp_time = measure_neurasp_speed(dprogram, nnMapping, optimizers, dataList, obsList, example_name)
-    #     # SLASH code
-    #     dataList_slash = [{k: i.squeeze() for k, i in dataDict.items()} for dataDict in dataList]
-    #     dataListLoader = torch.utils.data.DataLoader(list(zip(dataList_slash, obsList)))
-    #     slash_neural_preds = (
-    #         "\nnpp(card(1,P), [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,"
-    #         "27,28,29,30,31,32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47,48,49,50,51]) :- player(P)."
-    #         "\nsuit(P,h) :- card(0,+P,-C), C <= 12."
-    #         "\nsuit(P,c) :- card(0,+P,-C), C >= 13, C <= 25."
-    #         "\nsuit(P,s) :- card(0,+P,-C), C >= 26, C <= 38."
-    #         "\nsuit(P,d) :- card(0,+P,-C), C >= 39."
-    #         "\nrank(P,R) :- card(0,+P,-C), rank_value(R,-C\\13+2).")
-    #     slash_program = facts + rules + slash_neural_preds
-    #     slash_time = measure_slash_speed(slash_program, nnMapping, optimizers, dataListLoader, example_name)
-    #     # New code
-    #     newrasp_time = measure_newrasp_speed(dprogram, nnMapping, optimizers, dataList, obsList, example_name)
-    #     save_timings()
-    #     # New code should be faster than existing code
-    #     assert (newrasp_time < neurasp_time)
-    #     assert (newrasp_time < slash_time)
-
 
     def test_speeds_card_arithmetic(self, op, cards, sample_size=None):
         """Test speeds of different implementations for the card arithmetic task."""
@@ -526,50 +259,36 @@ class TestSpeeds(unittest.TestCase):
         expand = 1.0
         if sample_size is not None:
             expand = len(trainDataset) / sample_size
-        if sample_size is not None:
             trainDataset = torch.utils.data.Subset(trainDataset, range(min(sample_size, len(trainDataset))))
         dataList = []
         obsList = []
-        # Turn into lists
-        for idx, (data, obs) in enumerate(trainDataset):
+        for data, obs in trainDataset:
             dataList.append({'p': data['p']})
             obsList.append(obs)
         # Original code
-        neurasp_time = measure_neurasp_speed(dprogram, nnMapping, optimizers, dataList, obsList, example_name, batch_size=32)
+        measure_neurasp_speed(dprogram, nnMapping, optimizers, dataList, obsList, example_name, batch_size=32)
         # SLASH code
         m = Net()
         nnMapping = {'card': m}
         optimizers = {'card': torch.optim.Adam(m.parameters())}
         with open('data/playing_card_facts_slash.lp') as file:
             facts = file.read()
+        player_facts = ' '.join(f'player(p{i + 1}).' for i in range(cards))
+        facts = facts.replace('player(p1). player(p2). player(p3).', player_facts)
         slash_program = ("suit_value(d,0). suit_value(c,13). suit_value(s,26). suit_value(h,39).\n"
                         "player_value(P,RV+SV) :- suit(P,S), rank(P,R), rank_value(R,RV), suit_value(S,SV).\n"
                         "result(V1+V2) :- player_value(p1,V1), player_value(p2,V2).\n"
                         "npp(card(1,P), [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,"
                         "27,28,29,30,31,32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47,48,49,50,51]) :- player(P).\n")
         slash_program = slash_program + facts
-        dataList_slash = [{f'p{n + 1}': dataDict['p'][n] for n in range(2)} for dataDict in dataList]
-        dataListLoader = torch.utils.data.DataLoader(list(zip(dataList_slash, obsList)), batch_size=32)
-        #slash_time = measure_slash_speed(slash_program, nnMapping, optimizers, dataListLoader, example_name, p_num = 8)
-        # New code
-        m = Net()
-        nnMapping = {'card': m}
-        optimizers = {'card': torch.optim.Adam(m.parameters())}
-        dataLoader = torch.utils.data.DataLoader(trainDataset, batch_size=4)
-        newrasp_time = measure_newrasp_speed(dprogram, nnMapping, optimizers, dataLoader, example_name)
-        # New Grasp Code 
-        m = Net()
-        nnMapping = {'card': m}
-        optimizers = {'card': torch.optim.Adam(m.parameters())}
-        dataLoader = torch.utils.data.DataLoader(trainDataset, batch_size=4)
-        newgrasp_time = measure_newgrasp_speed(dprogram, nnMapping, optimizers, dataLoader, example_name)
+        dataList_slash = [
+            {f'p{i + 1}': dataDict['p'][i] for i in range(cards)}
+            for dataDict in dataList
+        ]
+        dataListLoader = torch.utils.data.DataLoader(list(zip(dataList_slash, obsList)), batch_size=64)
+        measure_slash_speed(slash_program, nnMapping, optimizers, dataListLoader, example_name, epoch=1)
         elapsed_times['task'] = f'card_{op}_{cards}'
         save_timings(expand=expand)
-        remove_cached_stable_models()
-        # New code should be faster than existing code
-        assert (newrasp_time < neurasp_time)
-        # assert (newrasp_time < slash_time)
-        assert (newgrasp_time < neurasp_time)
 
     def test_speeds_card_arithmetic_2sum(self):
         self.test_speeds_card_arithmetic('sum', 2, sample_size=128)

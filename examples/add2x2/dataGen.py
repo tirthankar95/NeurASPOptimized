@@ -4,6 +4,7 @@ import torchvision
 from torch.utils.data import Dataset
 from torchvision.transforms import transforms
 
+
 class MNIST_Addition(Dataset):
     def __init__(self, dataset, examples):
         self.data = list()

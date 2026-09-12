@@ -21,7 +21,7 @@ class Net(nn.Module):
             nn.Softmax(1)
         )
 
-    def forward(self, x):
+    def forward(self, x, marg_idx=None, type=1):
         if x.dim() == 5:
             batch_size, num_digits, channels, height, width = x.shape
             x = x.reshape(batch_size * num_digits, channels, height, width)
