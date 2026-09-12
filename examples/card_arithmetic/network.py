@@ -22,7 +22,7 @@ class Net(torch.nn.Module):
         self.softmax = torch.nn.Softmax(1)
 
 
-    def forward(self, x):
+    def forward(self, x, marg_idx=None, type=1):
         """
         Process the input image
         :param x: Batched input images

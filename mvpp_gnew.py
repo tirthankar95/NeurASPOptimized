@@ -319,7 +319,6 @@ class MVPP:
                 model_probs, model_indices])
             print(f"Tensor size for gradients computation(Space Optimized): {_size} KB")
             self.useOnce = False
-            assert False
         return gradients
 
     def mvppLearn(self, models):
