@@ -28,8 +28,6 @@ class Net(torch.nn.Module):
         :param x: Batched input images
         :return: Prediction of downstream label as a logit tensor
         """
-        if x.dim() == 5:
-            x = x.flatten(0, 1)
         x = self.pool(self.ReLU(self.conv1(x)))
         x = self.pool(self.ReLU(self.conv2(x)))
         x = self.pool(self.ReLU(self.conv3(x)))

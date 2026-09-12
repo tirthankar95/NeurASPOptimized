@@ -1,3 +1,4 @@
+
 import numpy as np
 import torch
 import torchvision
@@ -19,11 +20,11 @@ class MNIST_Member(Dataset):
         return len(self.data)
 
     def __getitem__(self, index):
-        i1, i2, i3, d, l = self.data[index]
-        return torch.cat((self.dataset[i1][0], self.dataset[i2][0], self.dataset[i3][0]), 0).unsqueeze(1), d, l
+        i1, i2, i3, i4, i5, d, l = self.data[index]
+        return torch.cat((self.dataset[i1][0], self.dataset[i2][0], self.dataset[i3][0], self.dataset[i4][0], self.dataset[i5][0]), 0).unsqueeze(1), d, l
 
 transform = transforms.Compose([transforms.ToTensor(), transforms.Normalize((0.1307,), (0.3081, ))])
-trainDataset = MNIST_Member(torchvision.datasets.MNIST(root='../data/', train=True, download=True, transform=transform), '../data/member3_train.txt')
+trainDataset = MNIST_Member(torchvision.datasets.MNIST(root='../data/', train=True, download=True, transform=transform), '../data/member5_train.txt')
 # only randomly take 3000 data
 np.random.seed(1) # fix the random seed for reproducibility
 trainDataset = torch.utils.data.Subset(trainDataset, np.random.choice(len(trainDataset), 3000, replace=False))

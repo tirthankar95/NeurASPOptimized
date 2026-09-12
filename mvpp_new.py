@@ -14,7 +14,7 @@ class MVPP:
     def __init__(self, program, k=1, eps=0.000001):
         self.k = k
         self.eps = eps
-
+        self.useOnce = True
         # each element in self.parameters is a list of probabilities
         self.parameters = []
         # each element in self.learnable is a list of Boolean values
@@ -282,6 +282,12 @@ class MVPP:
         gradient = (p_obs_i - p_obs_j) / p_obs
         return gradient.item()
 
+    def getTensorSize(self, tensors):
+        _size = 0
+        for tensor in tensors:
+            _size += tensor.numel() * tensor.element_size()
+        return _size / 1024
+    
     def mvppLearnRule(self, models, probs, num_out):
         net_confs = torch.stack(self.parameters)
         denominator = sum(probs)
@@ -295,7 +301,12 @@ class MVPP:
         nums_out = torch.arange(num_out)
         multiplication_factor = (models.unsqueeze(-1) == nums_out).float() * 2 - 1
         gradients = (weighted_probs.unsqueeze(-1) * multiplication_factor).sum(0) / denominator
-
+        if self.useOnce:
+            _size = self.getTensorSize([net_confs, concept_indices, concept_probs, \
+                weighted_probs, multiplication_factor, gradients])
+            print(f"Tensor size for gradients computation: {_size} KB")
+            self.useOnce = False
+            assert False
         return gradients
 
     def mvppLearn(self, models):
