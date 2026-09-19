@@ -263,7 +263,9 @@ class NeurASP:
             self.nnMapping[m].train()
 
         # we train for 'epoch' times of epochs
-        forward_pass = 0
+        forward_pass, sz = 0, len(dataList)
+        val_set_dl, val_set_obs = [x for idx, x in enumerate(dataList) if idx <= 0.1 * sz], \
+                                [x for idx, x in enumerate(obsList) if idx <= 0.1 * sz]
         for epochIdx in range(epoch):
             # for each training instance in the training data
             iterator = enumerate(tqdm(dataList)) if bar else enumerate(dataList)
@@ -391,7 +393,7 @@ class NeurASP:
                 is_final_step = epochIdx == epoch - 1 and dataIdx == n - 1
                 if accStep != 0 and (is_first_step or is_acc_step or is_final_step):
                     accStep *= 2
-                    downAcc = self.testConstraint(dataList, obsList, [self.mvpp['program']])
+                    downAcc = self.testConstraint(val_set_dl, val_set_obs, [self.mvpp['program']])
                     print(f"[NeurASP original] Downstream validation iteration {epochIdx * n + dataIdx + 1}: "
                         f"Accuracy: {downAcc * 100:.2f}%")
         # Step 6: save the stable models in a pickle file for potentially later usage
