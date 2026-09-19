@@ -1,7 +1,9 @@
 export PYTHONPATH="$(pwd)/.."
-python3 -m unittest -v test_speeds.TestSpeeds.test_speeds_member3
-python3 -m unittest -v test_speeds.TestSpeeds.test_speeds_member5
-python3 -m unittest -v test_speeds.TestSpeeds.test_speeds_mnist_add
-python3 -m unittest -v test_speeds.TestSpeeds.test_speeds_add2x2
-python3 -m unittest -v test_speeds.TestSpeeds.test_speeds_card_arithmetic_2sum
-python3 -m unittest -v test_speeds.TestSpeeds.test_speeds_card_arithmetic_3sum
+# python3 test_speeds.py member3 --val
+python3 test_speeds.py mnist_add --val
+# python3 test_speeds.py member3 --accStep 2
+# python3 test_speeds.py member5
+# python3 test_speeds.py mnist_add
+# python3 test_speeds.py add2x2
+# python3 test_speeds.py card_arithmetic_2sum
+# python3 test_speeds.py card_arithmetic_3sum

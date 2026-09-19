@@ -276,6 +276,7 @@ class NeurASP:
         for epochIdx in range(epoch):
             # for each training instance in the training data
             iterator = enumerate(tqdm(dataset)) if bar else enumerate(dataset)
+            n = len(dataset)
             for dataIdx, (data, obs) in iterator:
                 # data is a dictionary. we need to edit its key if the key contains a defined const c
                 # where c is defined in rule #const c=v.
@@ -410,12 +411,10 @@ class NeurASP:
                                 losses.append(lossFunc(nnOutput[m][t].view(-1, self.n[m]), latentLabels[m][t]))
                         if losses:
                             torch.stack(losses).sum().backward()
-
                 # Update the parameters for every network, not just the last one seen above
                 for m in self.nnMapping:
                     self.optimizers[m].step()
                     self.optimizers[m].zero_grad()
-
                 # If using semantic loss, we update probabilities in normal prob. rules
                 if lossFunc == 'semantic':
                     if self.normalProbs:
@@ -427,23 +426,26 @@ class NeurASP:
                                     dmvpp.parameters[ruleIdxMVPP][atomIdx] += lr * ruleGradients[atomIdx]
                         dmvpp.normalize_probs()
                         self.normalProbs = dmvpp.parameters[self.mvpp['nnPrRuleNum']:]
-
                 # Calculate and print training accuracy every accStep steps
-                if accStep != 0 and (epochIdx == 0 and dataIdx == 0 or (dataIdx + 1) % accStep == 0):
+                is_first_step = epochIdx == 0 and dataIdx == 0
+                is_acc_step = (dataIdx + 1) % accStep == 0 if accStep != 0 else False
+                is_final_step = epochIdx == epoch - 1 and dataIdx == len(dataset) - 1
+                if accStep != 0 and (is_first_step or is_acc_step or is_final_step):
+                    accStep *= 2
                     results = {'algorithm': 'NeurASP', 'dataset': dataset_name, 'task': task,
                                 'seed': seed,
                                 'epoch': epochIdx, 'step': dataIdx + 1, 'batch_size': batch_size}
                     print(f"\nEpoch {epochIdx}, step {dataIdx + 1}:")
-
                     for m in self.nnMapping:
                         results[f'{m}_lr'] = self.optimizers[m].param_groups[0]['lr']
                         results[f'{m}_weight_decay'] = self.optimizers[m].param_groups[0]['weight_decay']
-
                     if valDataset:
                         # Use validation set if it exists
+                        valDataset = dataset[:int(len(dataset) * 0.1)]
                         downAcc, latentAcc = self.calculate_accuracies(valDataset, dmvpp, storeSM, opt)
                         results['downstream_val_accuracy'] = downAcc
-                        print(f"Downstream validation accuracy: {downAcc * 100:.2f}%")
+                        print(f"[NeurASP fast gradient] Downstream validation iteration {epochIdx * n + dataIdx + 1}: "
+                            f"Accuracy: {downAcc * 100:.2f}%")
                         for m in latentAcc:
                             if latentAcc[m] != 'unknown':
                                 # There exist latent accuracies
@@ -466,23 +468,21 @@ class NeurASP:
                         bestDownAcc = downAcc
                         for m in self.nnMapping:
                             torch.save(self.nnMapping[m].state_dict(), f'saved_models/{task}_{m}_{seed}.pth')
-
                     # Write results into JSON lines file
                     if not os.path.isdir('results'):
                         os.mkdir('results')
                     with open(f'results/{task}_results.jsonl', 'a') as f:
                         f.write(json.dumps(results) + "\n")
-
                     # Put networks back into train mode
                     for m in self.nnMapping:
                         self.nnMapping[m].train()
+        # Save the stable models in a pickle file
+        if savePickle:
+            if not os.path.isdir('saved_models'):
+                os.mkdir('saved_models')
+            with open(f'saved_models/{task}_stable_models.pkl', 'wb') as fp:
+                pickle.dump(self.stableModels, fp)
 
-            # Save the stable models in a pickle file
-            if savePickle:
-                if not os.path.isdir('saved_models'):
-                    os.mkdir('saved_models')
-                with open(f'saved_models/{task}_stable_models.pkl', 'wb') as fp:
-                    pickle.dump(self.stableModels, fp)
 
     def testNN(self, nn, testLoader):
         """
@@ -595,6 +595,7 @@ class NeurASP:
             print(
                 f'The accuracy for constraint {programIdx + 1} is {float(count[programIdx]) / len(dataset)}')
 
+
     def calculate_accuracies(self, dataset, dmvpp, storeSM=True, opt=False):
         """
         Calculates latent and downstream accuracies of all neural networks in task.
@@ -606,6 +607,7 @@ class NeurASP:
         latentAccuracies = {}
         numLatentLabels = {}
         downstreamAccuracy = 0
+        numExamples = 0
         for func in self.nnMapping:
             self.nnMapping[func].eval()
             self.nnMapping[func].to(self.device)
@@ -618,6 +620,7 @@ class NeurASP:
                     data[self.constReplacement(key)] = data.pop(key)
                 if isinstance(obs, str):
                     obs = [obs]
+                numExamples += len(obs)
 
                 nnOutput = {}
                 for m in self.nnOutputs:
@@ -669,7 +672,9 @@ class NeurASP:
                         if storeSM:
                             self.stableModels[obs[b]] = models
 
-                    if (torch.stack(probs) == models).all(dim=1).any():
+                    predictions = torch.stack([torch.as_tensor(prob, dtype=torch.long) for prob in probs])
+                    models = models.reshape(-1, len(probs))
+                    if (predictions == models).all(dim=1).any():
                         # The latent concept predictions form a valid model, hence the downstream prediction is correct
                         downstreamAccuracy += 1
 
@@ -683,4 +688,4 @@ class NeurASP:
             dataset_len = len(dataset.dataset)
         else:
             dataset_len = len(dataset)
-        return downstreamAccuracy/dataset_len, latentAccuracies
+        return downstreamAccuracy/numExamples, latentAccuracies

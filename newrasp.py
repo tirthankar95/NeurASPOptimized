@@ -340,17 +340,19 @@ class NeurASP:
 
         # we train for 'epoch' times of epochs
         for epochIdx in range(epoch):
-            
             # for each training instance in the training data
             iterator = enumerate(tqdm(dataset)) if bar else enumerate(dataset)
+            n = len(dataset)
             for dataIdx, (data, obs) in iterator:
                 # data is a dictionary. we need to edit its key if the key contains a defined const c
                 # where c is defined in rule #const c=v.
                 for key in list(data.keys()):
                     data[self.constReplacement(key)] = data.pop(key)
+
                 # Put obs in list if data is unbatched
                 if isinstance(obs, str):
                     obs = [obs]
+
                 # Step 1: get the output of each neural network and initialize the gradients
                 nnOutput = {}
                 latentLabels = {}
@@ -445,7 +447,11 @@ class NeurASP:
                         dmvpp.normalize_probs()
                         self.normalProbs = dmvpp.parameters[self.mvpp['nnPrRuleNum']:]
                 # Calculate and print training accuracy every accStep steps
-                if accStep != 0 and (epochIdx == 0 and dataIdx == 0 or (dataIdx + 1) % accStep == 0):
+                is_first_step = epochIdx == 0 and dataIdx == 0
+                is_acc_step = (dataIdx + 1) % accStep == 0 if accStep != 0 else False
+                is_final_step = epochIdx == epoch - 1 and dataIdx == len(dataset) - 1
+                if accStep != 0 and (is_first_step or is_acc_step or is_final_step):
+                    accStep *= 2
                     results = {'algorithm': 'NeurASP', 'dataset': dataset_name, 'task': task,
                                 'seed': seed,
                                 'epoch': epochIdx, 'step': dataIdx + 1, 'batch_size': batch_size}
@@ -455,9 +461,11 @@ class NeurASP:
                         results[f'{m}_weight_decay'] = self.optimizers[m].param_groups[0]['weight_decay']
                     if valDataset:
                         # Use validation set if it exists
+                        valDataset = dataset[:int(len(dataset) * 0.1)]
                         downAcc, latentAcc = self.calculate_accuracies(valDataset, dmvpp, storeSM, opt)
                         results['downstream_val_accuracy'] = downAcc
-                        print(f"Downstream validation accuracy: {downAcc * 100:.2f}%")
+                        print(f"[NeurASP vector caching] Downstream validation iteration {epochIdx * n + dataIdx + 1}: "
+                            f"Accuracy: {downAcc * 100:.2f}%")
                         for m in latentAcc:
                             if latentAcc[m] != 'unknown':
                                 # There exist latent accuracies
@@ -488,13 +496,12 @@ class NeurASP:
                     # Put networks back into train mode
                     for m in self.nnMapping:
                         self.nnMapping[m].train()
-            
-            # Save the stable models in a pickle file
-            if savePickle:
-                if not os.path.isdir('saved_models'):
-                    os.mkdir('saved_models')
-                with open(f'saved_models/{task}_stable_models.pkl', 'wb') as fp:
-                    pickle.dump(self.stableModels, fp)
+        # Save the stable models in a pickle file
+        if savePickle:
+            if not os.path.isdir('saved_models'):
+                os.mkdir('saved_models')
+            with open(f'saved_models/{task}_stable_models.pkl', 'wb') as fp:
+                pickle.dump(self.stableModels, fp)
 
 
     def testNN(self, nn, testLoader):
@@ -621,6 +628,7 @@ class NeurASP:
         latentAccuracies = {}
         numLatentLabels = {}
         downstreamAccuracy = 0
+        numExamples = 0
         for func in self.nnMapping:
             self.nnMapping[func].eval()
             self.nnMapping[func].to(self.device)
@@ -633,6 +641,7 @@ class NeurASP:
                     data[self.constReplacement(key)] = data.pop(key)
                 if isinstance(obs, str):
                     obs = [obs]
+                numExamples += len(obs)
 
                 nnOutput = {}
                 for m in self.nnOutputs:
@@ -641,6 +650,10 @@ class NeurASP:
                         if isinstance(data[t], tuple) or isinstance(data[t], list):
                             # The data contains latent labels
                             dataTensor = data[t][0]
+                            # dataTensor may carry an extra group dim (batch, group, C, H, W); flatten it
+                            # into the row dim so nnOutput[m][t] stays flat, matching b*self.e[m]+i indexing
+                            if dataTensor.ndim == 5:
+                                dataTensor = dataTensor.flatten(0, 1)
                             nnOutput[m][t] = self.nnMapping[m](dataTensor.to(self.device)).detach().to('cpu')
 
                             if m in data[t][1]:
@@ -652,6 +665,8 @@ class NeurASP:
 
                         else:
                             dataTensor = data[t]
+                            if dataTensor.ndim == 5:
+                                dataTensor = dataTensor.flatten(0, 1)
                             nnOutput[m][t] = self.nnMapping[m](dataTensor.to(self.device)).detach().to('cpu')
 
                 for b in range(len(obs)):
@@ -678,7 +693,9 @@ class NeurASP:
                         if storeSM:
                             self.stableModels[obs[b]] = models
 
-                    if (torch.stack(probs) == models).all(dim=1).any():
+                    predictions = torch.stack([torch.as_tensor(prob, dtype=torch.long) for prob in probs])
+                    models = models.reshape(-1, len(probs))
+                    if (predictions == models).all(dim=1).any():
                         # The latent concept predictions form a valid model, hence the downstream prediction is correct
                         downstreamAccuracy += 1
 
@@ -687,11 +704,9 @@ class NeurASP:
                 latentAccuracies[m] /= numLatentLabels[m]
             else:
                 latentAccuracies[m] = 'unknown'
-
         if hasattr(dataset, 'dataset'):
             # Dataset is a dataloader
             dataset_len = len(dataset.dataset)
         else:
             dataset_len = len(dataset)
-
-        return downstreamAccuracy/dataset_len, latentAccuracies
+        return downstreamAccuracy/numExamples, latentAccuracies

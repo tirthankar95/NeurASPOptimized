@@ -225,7 +225,7 @@ class NeurASP:
         return dmvpp.find_one_most_probable_SM_under_obs_noWC(obs=obs)
 
 
-    def learn(self, dataList, obsList, epoch, alpha=0, lossFunc='cross', method='exact', lr=0.01, opt=False, storeSM=False, smPickle=None, accEpoch=0, batchSize=1, bar=False):
+    def learn(self, dataList, obsList, epoch, alpha=0, lossFunc='cross', method='exact', lr=0.01, opt=False, storeSM=False, smPickle=None, accStep=0, batchSize=1, bar=False):
         """
         @param dataList: a list of dictionaries, where each dictionary maps terms to either a tensor/np-array or a tuple (tensor/np-array, {'m': labelTensor})
         @param obsList: a list of strings, where each string is a set of constraints denoting an observation
@@ -267,6 +267,7 @@ class NeurASP:
         for epochIdx in range(epoch):
             # for each training instance in the training data
             iterator = enumerate(tqdm(dataList)) if bar else enumerate(dataList)
+            n = len(dataList)
             for dataIdx, data in iterator:
                 # data is a dictionary. we need to edit its key if the key contains a defined const c
                 # where c is defined in rule #const c=v.
@@ -384,17 +385,22 @@ class NeurASP:
                         dmvpp.normalize_probs()
                         self.normalProbs = dmvpp.parameters[self.mvpp['nnPrRuleNum']:]
 
-                # Step 5: show training accuracy
-                if accEpoch !=0 and (dataIdx+1) % accEpoch == 0:
-                    print(f'Training accuracy at interation {dataIdx+1}:')
-                    self.testConstraint(dataList, obsList, [self.mvpp['program']])
-
-            # Step 6: save the stable models in a pickle file for potentially later usage
-            if savePickle:
-                with open(smPickle, 'wb') as fp:
-                    pickle.dump(self.stableModels, fp)
-                savePickle = False
+                # Calculate and print training accuracy every accStep steps
+                is_first_step = epochIdx == 0 and dataIdx == 0
+                is_acc_step = (dataIdx + 1) % accStep == 0 if accStep != 0 else False
+                is_final_step = epochIdx == epoch - 1 and dataIdx == n - 1
+                if accStep != 0 and (is_first_step or is_acc_step or is_final_step):
+                    accStep *= 2
+                    downAcc = self.testConstraint(dataList, obsList, [self.mvpp['program']])
+                    print(f"[NeurASP original] Downstream validation iteration {epochIdx * n + dataIdx + 1}: "
+                        f"Accuracy: {downAcc * 100:.2f}%")
+        # Step 6: save the stable models in a pickle file for potentially later usage
+        if savePickle:
+            with open(smPickle, 'wb') as fp:
+                pickle.dump(self.stableModels, fp)
+            savePickle = False
         print(f'{forward_pass=}')
+
 
     def testNN(self, nn, testLoader):
         """
@@ -425,7 +431,6 @@ class NeurASP:
                 total += target.shape[0]
                 singleCorrect += correctionMatrix.sum().item()
                 singleTotal += target.numel()
-
         accuracy = 100. * correct / total
         singleAccuracy = 100. * singleCorrect / singleTotal
         return accuracy, singleAccuracy
@@ -505,4 +510,4 @@ class NeurASP:
                     if mvpp.find_one_SM_under_obs(obs=obsList[dataIdx]):
                         count[programIdx] += 1
         for programIdx, program in enumerate(mvppList):
-            print(f'The accuracy for constraint {programIdx+1} is {float(count[programIdx])/len(dataList)}')
+            return float(count[programIdx])/len(dataList)

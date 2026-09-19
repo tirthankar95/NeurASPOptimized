@@ -1,9 +1,10 @@
+import argparse
 import glob
 import json
+import math
 import os
 import random
 import time
-import unittest
 from unittest import mock
 
 import torch
@@ -17,6 +18,16 @@ from newrasp import NeurASP as NewrASP
 
 elapsed_times = {}
 ROOT_DIR = os.path.dirname(os.path.abspath(__file__))
+
+parser = argparse.ArgumentParser()
+parser.add_argument('test', nargs='?', default='member3',
+                    choices=['mnist_add', 'add2x2', 'member3', 'member5',
+                            'card_arithmetic_2sum', 'card_arithmetic_3sum'],
+                    help='Name of the speed test to run')
+parser.add_argument('--accStep', type=int, default=0)
+parser.add_argument('--val', action='store_true')
+args = parser.parse_args()
+accStep = math.inf if args.accStep == -1 else args.accStep
 
 
 def remove_cached_stable_models():
@@ -49,7 +60,7 @@ def sample_examples(dataList, obsList, sample_size):
 
 
 def measure_neurasp_speed(dprogram, nnMapping, optimizers, dataList, obsList, example_name, opt=False, batch_size=64,
-                        gpu=False, epoch=1):
+                        gpu=False, epoch=1, accStep=0):
     """Measure the speed of the original NeurASP code for an example."""
     NeurASPobj = NeurASP(dprogram, nnMapping, optimizers, gpu=gpu)
     with (mock.patch.object(MVPP, 'find_k_SM_under_obs',
@@ -61,12 +72,14 @@ def measure_neurasp_speed(dprogram, nnMapping, optimizers, dataList, obsList, ex
         mock.patch.object(MVPP, 'mvppLearnRule',
                             time_method(MVPP, 'mvppLearnRule', f'og_{example_name}_grad'))):
         start_time = time.perf_counter()
-        NeurASPobj.learn(dataList=dataList, obsList=obsList, epoch=epoch, opt=opt, batchSize=batch_size, storeSM=True, bar=True)
+        NeurASPobj.learn(dataList=dataList, obsList=obsList, epoch=epoch, opt=opt, batchSize=batch_size, storeSM=True, bar=True, \
+                        accStep=accStep)
     elapsed_times[f'og_{example_name}_total'] = time.perf_counter() - start_time
     return elapsed_times[f'og_{example_name}_total']
 
 
-def measure_newrasp_speed(dprogram, nnMapping, optimizers, dataset, example_name, opt=False, epoch=1, gpu=False):
+def measure_newrasp_speed(dprogram, nnMapping, optimizers, dataset, example_name, opt=False, epoch=1, gpu=False,
+                        valDataset=None, accStep=0):
     """Measure the speed of the new implementation of NeurASP for an example."""
     NewrASPobj = NewrASP(dprogram, nnMapping, optimizers,gpu=gpu)
     with (mock.patch.object(MVPPNew, 'find_k_SM_under_obs',
@@ -76,12 +89,14 @@ def measure_newrasp_speed(dprogram, nnMapping, optimizers, dataset, example_name
         mock.patch.object(MVPPNew, 'mvppLearnRule',
                             time_method(MVPPNew, 'mvppLearnRule', f'new_{example_name}_grad'))):
         start_time = time.perf_counter()
-        NewrASPobj.learn(dataset, epoch=epoch, opt=opt, storeSM=True, bar=True)
+        NewrASPobj.learn(dataset, epoch=epoch, opt=opt, storeSM=True, bar=True, task=example_name,
+                        valDataset=valDataset, accStep=accStep)
     elapsed_times[f'new_{example_name}_total'] = time.perf_counter() - start_time
     return elapsed_times[f'new_{example_name}_total']
 
 
-def measure_newgrasp_speed(dprogram, nnMapping, optimizers, dataset, example_name, opt=False, epoch=1, gpu=False):
+def measure_newgrasp_speed(dprogram, nnMapping, optimizers, dataset, example_name, opt=False, epoch=1, gpu=False,
+                        valDataset=None, accStep=0):
     """Measure the speed of the new GRASP implementation of NeurASP for an example."""
     NewGraspASPobj = NewGraspASP(dprogram, nnMapping, optimizers,gpu=gpu)
     with (mock.patch.object(MVPPGnew, 'find_k_SM_under_obs',
@@ -91,7 +106,8 @@ def measure_newgrasp_speed(dprogram, nnMapping, optimizers, dataset, example_nam
         mock.patch.object(MVPPGnew, 'mvppLearnRule',
                             time_method(MVPPGnew, 'mvppLearnRule', f'newgrasp_{example_name}_grad'))):
         start_time = time.perf_counter()
-        NewGraspASPobj.learn(dataset, epoch=epoch, opt=opt, storeSM=True, bar=True)
+        NewGraspASPobj.learn(dataset, epoch=epoch, opt=opt, storeSM=True, bar=True, task=example_name,
+                            valDataset=valDataset, accStep=accStep)
     elapsed_times[f'newgrasp_{example_name}_total'] = time.perf_counter() - start_time
     return elapsed_times[f'newgrasp_{example_name}_total']
 
@@ -122,211 +138,245 @@ def save_timings(expand=1.0):
     with open('timings.jsonl', 'a') as fo:
         fo.write(json.dumps(new_elapsed_times) + '\n')
 
-class TestSpeeds(unittest.TestCase):
-
-    def test_speeds_mnist_add(self, seed=None):
-        """Test speeds of different implementations for the MNIST Addition task"""
-        os.chdir(os.path.abspath(ROOT_DIR + '/../examples/mnistAdd'))
-        elapsed_times.clear()
-        if not seed:
-            seed = random.randint(0, 100000)
-        torch.manual_seed(seed)
-        random.seed(seed)
-        from examples.mnistAdd.dataGen import dataList, obsList
-        from examples.mnistAdd.dataGenNew import dataList as dataListN
-        from examples.mnistAdd.dataGenNew import obsList as obsListN
-        from examples.mnistAdd.network import Net
-        print("\nMNIST Add speed test")
-        example_name = 'mnist_add'
-        dprogram = ("img(i1). img(i2).\n"
-                    "addition(A,B,N) :- digit(0,A,N1), digit(0,B,N2), N=N1+N2.\n"
-                    "nn(digit(1,X), [0,1,2,3,4,5,6,7,8,9]) :- img(X).")
-        dataList_slash = [{k: i.squeeze(0) for k, i in dataDict.items()} for dataDict in dataList]
-        total_data_size = sum(len(obs) for obs in obsList)
-        print(f'DataSize: {total_data_size} ({len(dataList_slash)} batches)')
-        dataListLoader = list(zip(dataList_slash, obsList))
-        dataListLoaderN = list(zip(dataListN, obsListN))
-        # Original code
-        m = Net()
-        nnMapping = {'digit': m}
-        optimizers = {'digit': torch.optim.Adam(m.parameters(), lr=0.001)}
-        measure_neurasp_speed(dprogram, nnMapping, optimizers, dataList, obsList, example_name, batch_size=64)
-        # New code
-        m = Net()
-        nnMapping = {'digit': m}
-        optimizers = {'digit': torch.optim.Adam(m.parameters(), lr=0.001)}
-        measure_newrasp_speed(dprogram, nnMapping, optimizers, dataListLoader, example_name)
-        # New grasp code 
-        m = Net()
-        nnMapping = {'digit': m}
-        optimizers = {'digit': torch.optim.Adam(m.parameters(), lr=0.001)}
-        measure_newgrasp_speed(dprogram, nnMapping, optimizers, dataListLoaderN, example_name)
-        elapsed_times['task'] = 'mnist_add'
-        save_timings()
-        remove_cached_stable_models()
-
-
-    def test_speeds_add2x2(self):
-        """Test speeds of different implementations for the Add 2x2 task"""
-        os.chdir(os.path.abspath(ROOT_DIR + '/../examples/add2x2'))
-        elapsed_times.clear()
-        from examples.add2x2.dataGen import dataList, obsList
-        from examples.add2x2.dataGenNew import dataList as dataListN
-        from examples.add2x2.dataGenNew import obsList as obsListN
-        from examples.add2x2.network import Net
-        print("\nAdd 2x2 speed test")
-        example_name = 'add2x2'
-        dprogram = ("nn(digit(4,i), [0,1,2,3,4,5,6,7,8,9]).\n"
-                    "add2x2(R1,R2,C1,C2) :- digit(0,i,N1), digit(1,i,N2), digit(2,i,N3), digit(3,i,N4), "
-                    "R1=N1+N2, R2=N3+N4, C1=N1+N3, C2=N2+N4.")
-        m = Net()
-        nnMapping = {'digit': m}
-        optimizers = {'digit': torch.optim.Adam(m.parameters())}
-        total_data_size = sum(len(obs) for obs in obsList)
-        print(f'DataSize: {total_data_size} ({len(dataList)} batches)')
-        # Original code
-        m = Net()
-        nnMapping = {'digit': m}
-        optimizers = {'digit': torch.optim.Adam(m.parameters())}
-        measure_neurasp_speed(dprogram, nnMapping, optimizers, dataList, obsList, example_name)
-        merged_data = list(zip(dataList, obsList))
-        # New code
-        m = Net()
-        nnMapping = {'digit': m}
-        optimizers = {'digit': torch.optim.Adam(m.parameters())}
-        measure_newrasp_speed(dprogram, nnMapping, optimizers, merged_data, example_name)
-        # New grasp code
-        m = Net()
-        nnMapping = {'digit': m}
-        optimizers = {'digit': torch.optim.Adam(m.parameters())}
-        dataListLoaderN = list(zip(dataListN, obsListN))
-        measure_newgrasp_speed(dprogram, nnMapping, optimizers, dataListLoaderN, example_name)
-        elapsed_times['task'] = 'add2x2'
-        save_timings()
+def test_speeds_mnist_add(seed=None):
+    """Test speeds of different implementations for the MNIST Addition task"""
+    os.chdir(os.path.abspath(ROOT_DIR + '/../examples/mnistAdd'))
+    elapsed_times.clear()
+    if not seed:
+        seed = random.randint(0, 100000)
+    torch.manual_seed(seed)
+    random.seed(seed)
+    from examples.mnistAdd.dataGen import dataList, obsList, test_loader as testLoader
+    from examples.mnistAdd.dataGenNew import dataList as dataListN
+    from examples.mnistAdd.dataGenNew import obsList as obsListN
+    from examples.mnistAdd.network import Net
+    print("\nMNIST Add speed test")
+    example_name = 'mnist_add'
+    dprogram = ("img(i1). img(i2).\n"
+                "addition(A,B,N) :- digit(0,A,N1), digit(0,B,N2), N=N1+N2.\n"
+                "nn(digit(1,X), [0,1,2,3,4,5,6,7,8,9]) :- img(X).")
+    dataList_slash = [{k: i.squeeze(0) for k, i in dataDict.items()} for dataDict in dataList]
+    total_data_size = sum(len(obs) for obs in obsList)
+    print(f'DataSize: {total_data_size} ({len(dataList_slash)} batches)')
+    dataListLoader = list(zip(dataList_slash, obsList))
+    dataListLoaderN = list(zip(dataListN, obsListN))
+    # CLI-controlled validation: --val runs a single epoch and reports accuracy on testLoader every accStep
+    valDataset, gpu = None, None
+    local_accStep = accStep
+    epoch = 1
+    if args.val:
+        local_accStep, gpu = 1, True
+        valDataset = testLoader
+    # Original code
+    m = Net()
+    nnMapping = {'digit': m}
+    optimizers = {'digit': torch.optim.Adam(m.parameters(), lr=0.001)}
+    measure_neurasp_speed(dprogram, nnMapping, optimizers, dataList, obsList, example_name, batch_size=64,
+                        epoch=epoch, gpu=gpu, accStep=local_accStep)
+    # New code
+    m = Net()
+    nnMapping = {'digit': m}
+    optimizers = {'digit': torch.optim.Adam(m.parameters(), lr=0.001)}
+    measure_newrasp_speed(dprogram, nnMapping, optimizers, dataListLoader, example_name, epoch=epoch, gpu=gpu,
+                        valDataset=valDataset, accStep=local_accStep)
+    # New grasp code 
+    m = Net()
+    nnMapping = {'digit': m}
+    optimizers = {'digit': torch.optim.Adam(m.parameters(), lr=0.001)}
+    measure_newgrasp_speed(dprogram, nnMapping, optimizers, dataListLoaderN, example_name, epoch=epoch, gpu=gpu,
+                        valDataset=valDataset, accStep=local_accStep)
+    elapsed_times['task'] = 'mnist_add'
+    save_timings()
+    remove_cached_stable_models()
 
 
-    def test_speeds_member(self, seed=None, n=5, sample_size=None):
-        """Test speeds of different implementations for the Member task"""
-        os.chdir(os.path.dirname(os.path.abspath(__file__)) + f'/../examples/member{n}')
-        elapsed_times.clear()
-        if not seed:
-            seed = random.randint(0, 100000)
-        torch.manual_seed(seed)
-        random.seed(seed)
-        print("\nMember speed test")
-        if os.path.isfile('saved_models/test_stable_models.pkl'):
-            os.remove('saved_models/test_stable_models.pkl')
-        example_name = 'member'
-        if n==3:
-            from examples.member3.dataGen import dataList, obsList
-            from examples.member3.network import Net
-            dprogram = ("nn(digit(3,i), [0,1,2,3,4,5,6,7,8,9]).\n"
-                        "member(D,0) :- digit(0,i,N1), digit(1,i,N2), digit(2,i,N3),\n"
-                        "check(D), D!=N1, D!=N2, D!=N3.\n"
+def test_speeds_add2x2():
+    """Test speeds of different implementations for the Add 2x2 task"""
+    os.chdir(os.path.abspath(ROOT_DIR + '/../examples/add2x2'))
+    elapsed_times.clear()
+    from examples.add2x2.dataGen import dataList, obsList, testLoader
+    from examples.add2x2.dataGenNew import dataList as dataListN
+    from examples.add2x2.dataGenNew import obsList as obsListN
+    from examples.add2x2.network import Net
+    print("\nAdd 2x2 speed test")
+    example_name = 'add2x2'
+    dprogram = ("nn(digit(4,i), [0,1,2,3,4,5,6,7,8,9]).\n"
+                "add2x2(R1,R2,C1,C2) :- digit(0,i,N1), digit(1,i,N2), digit(2,i,N3), digit(3,i,N4), "
+                "R1=N1+N2, R2=N3+N4, C1=N1+N3, C2=N2+N4.")
+    m = Net()
+    nnMapping = {'digit': m}
+    optimizers = {'digit': torch.optim.Adam(m.parameters())}
+    total_data_size = sum(len(obs) for obs in obsList)
+    print(f'DataSize: {total_data_size} ({len(dataList)} batches)')
+    # CLI-controlled validation: --val runs a single epoch and reports accuracy on testLoader every accStep
+    valDataset, gpu = None, None
+    local_accStep = accStep
+    epoch = 1
+    if args.val:
+        local_accStep, gpu = 1, True
+        valDataset = testLoader
+    # Original code
+    m = Net()
+    nnMapping = {'digit': m}
+    optimizers = {'digit': torch.optim.Adam(m.parameters())}
+    measure_neurasp_speed(dprogram, nnMapping, optimizers, dataList, obsList, example_name, epoch=epoch, gpu=gpu,
+                        accStep=local_accStep)
+    merged_data = list(zip(dataList, obsList))
+    # New code
+    m = Net()
+    nnMapping = {'digit': m}
+    optimizers = {'digit': torch.optim.Adam(m.parameters())}
+    measure_newrasp_speed(dprogram, nnMapping, optimizers, merged_data, example_name, epoch=epoch, gpu=gpu,
+                        valDataset=valDataset, accStep=local_accStep)
+    # New grasp code
+    m = Net()
+    nnMapping = {'digit': m}
+    optimizers = {'digit': torch.optim.Adam(m.parameters())}
+    dataListLoaderN = list(zip(dataListN, obsListN))
+    measure_newgrasp_speed(dprogram, nnMapping, optimizers, dataListLoaderN, example_name, epoch=epoch, gpu=gpu,
+                        valDataset=valDataset, accStep=local_accStep)
+    elapsed_times['task'] = 'add2x2'
+    save_timings()
+
+
+def test_speeds_member(seed=None, n=5, sample_size=None):
+    """Test speeds of different implementations for the Member task"""
+    os.chdir(os.path.dirname(os.path.abspath(__file__)) + f'/../examples/member{n}')
+    elapsed_times.clear()
+    if not seed:
+        seed = random.randint(0, 100000)
+    torch.manual_seed(seed)
+    random.seed(seed)
+    print("\nMember speed test")
+    if os.path.isfile('saved_models/test_stable_models.pkl'):
+        os.remove('saved_models/test_stable_models.pkl')
+    example_name = 'member'
+    if n==3:
+        from examples.member3.dataGen import dataList, obsList, testLoader
+        from examples.member3.network import Net
+        dprogram = ("nn(digit(3,i), [0,1,2,3,4,5,6,7,8,9]).\n"
+                    "member(D,0) :- digit(0,i,N1), digit(1,i,N2), digit(2,i,N3),\n"
+                    "check(D), D!=N1, D!=N2, D!=N3.\n"
+                    "member(D,1) :- check(D), not member(D,0).")
+        slash_program = ("img(i1). img(i2). img(i3).\n"
+                        "npp(digit(1,X), [0,1,2,3,4,5,6,7,8,9]) :- img(X).\n"
+                        "member(D,0) :- digit(0,+i1,-N1), digit(0,+i2,-N2), digit(0,+i3,-N3), check(D), D!=N1, D!=N2, D!=N3.\n"
                         "member(D,1) :- check(D), not member(D,0).")
-            slash_program = ("img(i1). img(i2). img(i3).\n"
-                            "npp(digit(1,X), [0,1,2,3,4,5,6,7,8,9]) :- img(X).\n"
-                            "member(D,0) :- digit(0,+i1,-N1), digit(0,+i2,-N2), digit(0,+i3,-N3), check(D), D!=N1, D!=N2, D!=N3.\n"
-                            "member(D,1) :- check(D), not member(D,0).")
-        elif n==5:
-            from examples.member5.dataGen import dataList, obsList
-            from examples.member5.network import Net
-            dprogram = ("nn(digit(5,i), [0,1,2,3,4,5,6,7,8,9]).\n"
-                        "member(D,0) :- digit(0,i,N1), digit(1,i,N2), digit(2,i,N3), digit(3,i,N4), digit(4,i,N5),\n"
-                        "check(D), D!=N1, D!=N2, D!=N3, D!=N4, D!=N5.\n"
-                        "member(D,1) :- check(D), not member(D,0).")
-            slash_program = ("img(i1). img(i2). img(i3). img(i4). img(i5).\n"
-                            "npp(digit(1,X), [0,1,2,3,4,5,6,7,8,9]) :- img(X).\n"
-                            "member(D,0) :- digit(0,+i1,-N1), digit(0,+i2,-N2), digit(0,+i3,-N3), digit(0,+i4,-N4), digit(0,+i5,-N5), check(D), D!=N1, D!=N2, D!=N3, D!=N4, D!=N5.\n"
-                            "member(D,1) :- check(D), not member(D,0).")
-        expand = 1.0
-        if sample_size is not None:
-            expand = len(dataList) / sample_size
-        m = Net()
-        nnMapping = {'digit': m}
-        optimizers = {'digit': torch.optim.Adam(m.parameters(), lr=0.001)}
-        # Sample random examples
-        sample_count = min(sample_size, len(dataList)) if sample_size is not None else min(1000, len(dataList))
-        dataList, obsList = sample_examples(dataList, obsList, sample_count)
-        total_data_size = sum(len(obs) for obs in obsList)
-        print(f'DataSize: {total_data_size} ({len(dataList)} batches)')
-        # Original code
-        measure_neurasp_speed(dprogram, nnMapping, optimizers, dataList, obsList, example_name, epoch=1)
-        # New code
-        m = Net()
-        nnMapping = {'digit': m}
-        optimizers = {'digit': torch.optim.Adam(m.parameters(), lr=0.001)}
-        dataList_new = [{k: i.squeeze(0) for k, i in dataDict.items()} for dataDict in dataList]
-        dataList_new = list(zip(dataList_new, obsList))
-        measure_newrasp_speed(dprogram, nnMapping, optimizers, dataList_new, example_name, epoch=1)
-        # New grasp
-        nnMapping = {'digit': m}
-        optimizers = {'digit': torch.optim.Adam(m.parameters(), lr=0.001)}
-        dataListLoaderN = list(zip(dataList, obsList))
-        measure_newgrasp_speed(dprogram, nnMapping, optimizers, dataListLoaderN, example_name, epoch=1)
-        save_timings(expand=expand)
+    elif n==5:
+        from examples.member5.dataGen import dataList, obsList, testLoader
+        from examples.member5.network import Net
+        dprogram = ("nn(digit(5,i), [0,1,2,3,4,5,6,7,8,9]).\n"
+                    "member(D,0) :- digit(0,i,N1), digit(1,i,N2), digit(2,i,N3), digit(3,i,N4), digit(4,i,N5),\n"
+                    "check(D), D!=N1, D!=N2, D!=N3, D!=N4, D!=N5.\n"
+                    "member(D,1) :- check(D), not member(D,0).")
+    expand = 1.0
+    if sample_size is not None:
+        expand = len(dataList) / sample_size
+    # CLI-controlled validation: --val runs a single epoch and reports accuracy on testLoader every accStep
+    valDataset, gpu = None, None
+    local_accStep = accStep
+    epoch = 1
+    if args.val:
+        local_accStep, gpu = 1, True
+        valDataset = testLoader
+    m = Net()
+    nnMapping = {'digit': m}
+    optimizers = {'digit': torch.optim.Adam(m.parameters(), lr=0.001)}
+    # Sample random examples
+    sample_count = min(sample_size, len(dataList)) if sample_size is not None else min(1000, len(dataList))
+    dataList, obsList = sample_examples(dataList, obsList, sample_count)
+    total_data_size = sum(len(obs) for obs in obsList)
+    print(f'DataSize: {total_data_size} ({len(dataList)} batches)')
+    # Original code
+    measure_neurasp_speed(dprogram, nnMapping, optimizers, dataList, obsList, example_name, epoch=1, gpu=gpu,
+                        accStep=local_accStep)
+    # New code
+    m = Net()
+    nnMapping = {'digit': m}
+    optimizers = {'digit': torch.optim.Adam(m.parameters(), lr=0.001)}
+    dataList_new = [{k: i.squeeze(0) for k, i in dataDict.items()} for dataDict in dataList]
+    dataList_new = list(zip(dataList_new, obsList))
+    measure_newrasp_speed(dprogram, nnMapping, optimizers, dataList_new, example_name, epoch=epoch, gpu=gpu,
+                        valDataset=valDataset, accStep=local_accStep)
+    # New grasp
+    nnMapping = {'digit': m}
+    optimizers = {'digit': torch.optim.Adam(m.parameters(), lr=0.001)}
+    dataListLoaderN = list(zip(dataList, obsList))
+    measure_newgrasp_speed(dprogram, nnMapping, optimizers, dataListLoaderN, example_name, epoch=epoch, gpu=gpu,
+                        valDataset=valDataset, accStep=local_accStep)
+    save_timings(expand=expand)
 
-    def test_speeds_member3(self):
-        """Wrapper so unittest can run the member benchmark with n=3."""
-        self.test_speeds_member(n=3)
+def test_speeds_member3():
+    """Wrapper to run the member benchmark with n=3."""
+    test_speeds_member(n=3)
 
-    def test_speeds_member5(self):
-        """Wrapper so unittest can run the member benchmark with n=5."""
-        self.test_speeds_member(n=5)
+def test_speeds_member5():
+    """Wrapper to run the member benchmark with n=5."""
+    test_speeds_member(n=5)
 
 
-    def test_speeds_card_arithmetic(self, op, cards, sample_size=None):
-        """Test speeds of different implementations for the card arithmetic task."""
-        os.chdir(os.path.abspath(ROOT_DIR + '/../examples/card_arithmetic'))
-        elapsed_times.clear()
-        from examples.card_arithmetic.dataGen import get_dataset
-        from examples.card_arithmetic.network import Net
-        from examples.card_arithmetic.networkNew import Net as NetNew
-        print("\nCard arithmetic speed test")
-        example_name = 'card_arithmetic'
-        m = Net()
-        nnMapping = {'card': m}
-        optimizers = {'card': torch.optim.Adam(m.parameters())}
-        trainDataset, __, dprogram = get_dataset(f'card_{op}_{cards}', './data')
-        expand = 1.0
-        if sample_size is not None:
-            expand = len(trainDataset) / sample_size
-        if sample_size is not None:
-            trainDataset = torch.utils.data.Subset(trainDataset, range(min(sample_size, len(trainDataset))))
-        dataList = []
-        obsList = []
-        # Turn into lists
-        for idx, (data, obs) in enumerate(trainDataset):
-            dataList.append({'p': data['p']})
-            obsList.append(obs)
-        # Original code
-        measure_neurasp_speed(dprogram, nnMapping, optimizers, dataList, obsList, example_name, batch_size=32)
-        # SLASH code
-        m = Net()
-        nnMapping = {'card': m}
-        optimizers = {'card': torch.optim.Adam(m.parameters())}
-        # New code
-        m = Net()
-        nnMapping = {'card': m}
-        optimizers = {'card': torch.optim.Adam(m.parameters())}
-        dataLoader = torch.utils.data.DataLoader(trainDataset, batch_size=4)
-        measure_newrasp_speed(dprogram, nnMapping, optimizers, dataLoader, example_name)
-        # New Grasp Code 
-        m = NetNew()
-        nnMapping = {'card': m}
-        optimizers = {'card': torch.optim.Adam(m.parameters())}
-        dataLoaderN = torch.utils.data.DataLoader(trainDataset, batch_size=4)
-        measure_newgrasp_speed(dprogram, nnMapping, optimizers, dataLoaderN, example_name)
-        elapsed_times['task'] = f'card_{op}_{cards}'
-        save_timings(expand=expand)
-        remove_cached_stable_models()
+def test_speeds_card_arithmetic(op, cards, sample_size=None):
+    """Test speeds of different implementations for the card arithmetic task."""
+    os.chdir(os.path.abspath(ROOT_DIR + '/../examples/card_arithmetic'))
+    elapsed_times.clear()
+    from examples.card_arithmetic.dataGen import get_dataset
+    from examples.card_arithmetic.network import Net
+    from examples.card_arithmetic.networkNew import Net as NetNew
+    print("\nCard arithmetic speed test")
+    example_name = 'card_arithmetic'
+    m = Net()
+    nnMapping = {'card': m}
+    optimizers = {'card': torch.optim.Adam(m.parameters())}
+    trainDataset, valDataset, dprogram = get_dataset(f'card_{op}_{cards}', './data')
+    expand = 1.0
+    if sample_size is not None:
+        expand = len(trainDataset) / sample_size
+    if sample_size is not None:
+        trainDataset = torch.utils.data.Subset(trainDataset, range(min(sample_size, len(trainDataset))))
+    dataList = []
+    obsList = []
+    # Turn into lists
+    for idx, (data, obs) in enumerate(trainDataset):
+        dataList.append({'p': data['p']})
+        obsList.append(obs)
+    # CLI-controlled validation: --val runs a single epoch and reports accuracy on valDataset every accStep
+    valLoader, gpu = None, None
+    local_accStep = accStep
+    epoch = 1
+    if args.val:
+        local_accStep, gpu = 1, True
+        valLoader = torch.utils.data.DataLoader(valDataset, batch_size=4)
+    # Original code
+    measure_neurasp_speed(dprogram, nnMapping, optimizers, dataList, obsList, example_name, batch_size=32,
+                        epoch=epoch, gpu=gpu, accStep=local_accStep)
+    # SLASH code
+    m = Net()
+    nnMapping = {'card': m}
+    optimizers = {'card': torch.optim.Adam(m.parameters())}
+    # New code
+    m = Net()
+    nnMapping = {'card': m}
+    optimizers = {'card': torch.optim.Adam(m.parameters())}
+    dataLoader = torch.utils.data.DataLoader(trainDataset, batch_size=4)
+    measure_newrasp_speed(dprogram, nnMapping, optimizers, dataLoader, example_name, epoch=epoch, gpu=gpu,
+                        valDataset=valLoader, accStep=local_accStep)
+    # New Grasp Code 
+    m = NetNew()
+    nnMapping = {'card': m}
+    optimizers = {'card': torch.optim.Adam(m.parameters())}
+    dataLoaderN = torch.utils.data.DataLoader(trainDataset, batch_size=4)
+    measure_newgrasp_speed(dprogram, nnMapping, optimizers, dataLoaderN, example_name, epoch=epoch, gpu=gpu,
+                        valDataset=valLoader, accStep=local_accStep)
+    elapsed_times['task'] = f'card_{op}_{cards}'
+    save_timings(expand=expand)
+    remove_cached_stable_models()
 
-    def test_speeds_card_arithmetic_2sum(self):
-        self.test_speeds_card_arithmetic('sum', 2)
+def test_speeds_card_arithmetic_2sum():
+    test_speeds_card_arithmetic('sum', 2)
 
-    def test_speeds_card_arithmetic_3sum(self):
-        self.test_speeds_card_arithmetic('sum', 3)
-        
+def test_speeds_card_arithmetic_3sum():
+    test_speeds_card_arithmetic('sum', 3)
+
     # def test_speeds_shortest_path(self):
     #     """Test speeds of different implementations for the Shortest Path task"""
     #     os.chdir(os.path.abspath(ROOT_DIR + '/../examples/shortest_path'))
@@ -520,3 +570,16 @@ class TestSpeeds(unittest.TestCase):
     #         self.test_speed_synthetic(100, 10, 1000)
     #         self.test_speed_synthetic(100, 10, 10000)
     #         self.test_speed_synthetic(100, 10, 100000)
+
+
+TESTS = {
+    'mnist_add': test_speeds_mnist_add,
+    'add2x2': test_speeds_add2x2,
+    'member3': test_speeds_member3,
+    'member5': test_speeds_member5,
+    'card_arithmetic_2sum': test_speeds_card_arithmetic_2sum,
+    'card_arithmetic_3sum': test_speeds_card_arithmetic_3sum,
+}
+
+if __name__ == '__main__':
+    TESTS[args.test]()
