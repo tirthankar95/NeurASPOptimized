@@ -16,7 +16,7 @@ import clingo
 import numpy as np
 import torch
 from torch import nn
-
+from torch.utils.data import DataLoader, Subset
 sys.path.append('../')
 sys.path.append('../../')
 sys.path.append('../../SLASH/')
@@ -580,8 +580,8 @@ class SLASH:
 
 
 
-    def learn(self, dataset_loader, epoch, method='exact', opt=False, k_num=0, p_num=1, slot_net=None, hungarian_matching=False, vqa=False, marginalisation_masks=None,  writer=None, same_threshold=0.99, batched_pass=False, vqa_params=None):
-
+    def learn(self, dataset_loader, epoch, method='exact', opt=False, k_num=0, p_num=1, slot_net=None, hungarian_matching=False, vqa=False, \
+        marginalisation_masks=None,  writer=None, same_threshold=0.99, batched_pass=False, vqa_params=None, accStep = 0):
         """
         @param dataset_loader: a pytorch dataloader object returning a dictionary e.g {im1: [bs,28,28], im2:[bs,28,28]} and the queries
         @param epoch: an integer denoting the current epoch
@@ -597,9 +597,7 @@ class SLASH:
         @param same_threshold: Threshold when method = same or same_top_k. Can be either a scalar value or a dict mapping treshold to networks m {"digit":0.99}
         @param batched_pass: boolean to forward all t belonging to the same m in one pass instead of t passes
         """
-
         assert p_num >= 1 and isinstance(p_num, int), 'Error: the number of processors used should greater equals one and a natural number'
-
         # get the mvpp program by self.mvpp
         #old NeurASP code. Can be reanbled if needed
         #if method == 'network_prediction':
@@ -612,14 +610,10 @@ class SLASH:
             dmvpp = MVPP(self.mvpp['program'], prob_ground=True , binary_rule_belongings= self.mvpp['binary_rule_belongings'], max_n= self.max_n)
         else:
             dmvpp = MVPP(self.mvpp['program'], max_n= self.max_n)
-
-
         # we train all neural network models
         for m in self.networkMapping:
             self.networkMapping[m].train() #torch training mode
             # self.networkMapping[m].module.train() #torch training mode
-
-
         total_loss = []
         sm_per_batch_list = []
         #store time per epoch
@@ -627,87 +621,75 @@ class SLASH:
         asp_time = []
         gradient_time  = []
         backward_time = []
-
+        # Each entry is (epoch, zero-based batch index, constraint accuracy).
+        # Keeping it on the learner makes it available to callers without
+        # changing the established return value of ``learn``.
+        self.downstream_validation_history = []
         #iterate over all batches
         pbar = tqdm(total=len(dataset_loader))
+        # Keep validation non-empty for small benchmark subsets.
+        n = max(1, int(0.1 * len(dataset_loader.dataset)))
+        sampled_dataset = Subset(dataset_loader.dataset, range(n))
+        val_set = DataLoader(
+            sampled_dataset,
+            batch_size=dataset_loader.batch_size,
+            shuffle=False
+        )
+        assert type(dataset_loader) == type(val_set)
         for batch_idx, (batch) in enumerate(dataset_loader):
             start_time = time.time()
-
             if hungarian_matching:
                 data_batch, query_batch, obj_enc_batch = batch
             elif vqa:
                 data_batch, query_batch, obj_filter, _ = batch
             else:
                 data_batch, query_batch = batch
-
-
-
             # If we have marginalisation masks, than we have to pick one for the batch
             if marginalisation_masks is not None:
                 marg_mask = marginalisation_masks[i]
             else:
                 marg_mask = None
-
             #STEP 0: APPLY SLOT ATTENTION TO TRANSFORM IMAGE TO SLOTS
             #we have a map which is : im: im_data
             #we want a map which is : s1: slot1_data, s2: slot2_data, s3: slot3_data
             if slot_net is not None:
                 slot_net.train()
                 dataTensor_after_slot = slot_net(data_batch['im'].to(self.device)) #forward the image
-
                 #add the slot outputs to the data batch
                 for slot_num in range(slot_net.n_slots):
                     key = 's'+str(slot_num+1)
                     data_batch[key] = dataTensor_after_slot[:,slot_num,:]
-
-
-
             #data is a dictionary. we need to edit its key if the key contains a defined const c
             #where c is defined in rule #const c=v.
             data_batch_keys = list(data_batch.keys())
             for key in data_batch_keys:
                 data_batch[self.constReplacement(key)] = data_batch.pop(key)
-
-
             # Step 1: get the output of each network and initialize the gradients
             networkOutput = {}
             networkLLOutput = {}
-
             #iterate over all networks
             for m in self.networkOutputs:
                 if m not in networkOutput:
                     networkOutput[m] = {}
-
-
                 #iterate over all output types and forwarded the input t trough the network
                 networkLLOutput[m] = {}
                 for o in self.networkOutputs[m]:
                     if o not in networkOutput[m]:
                         networkOutput[m][o] = {}
-
-
                     #one forward pass to get the outputs
                     if self.networkTypes[m] == 'npp':
-
                         #forward all t belonging to the same m in one pass instead of t passes
                         if batched_pass:
-
                             #collect all inputs t for every network m
                             dataTensor = [data_batch.get(key).to(device=self.device) for key in self.networkOutputs[m][o].keys()]
                             dataTensor = torch.cat(dataTensor)
-
                             len_keys = len(query_batch)
-
-
                             output = self.networkMapping[m].forward(
                                                             dataTensor.to(self.device),
                                                             marg_idx=marg_mask,
                                                             type=o)
-
                             outputs = output.split(len_keys)
-
                             networkOutput[m][o] = {**networkOutput[m][o], **dict(zip(self.networkOutputs[m][o].keys(), outputs))}
-
                         else:
                             for t in self.networkOutputs[m][o]:
 
@@ -726,40 +708,29 @@ class SLASH:
                                 #if the network predicts only one probability we add a placeholder for the false class
                                 if m in self.mvpp['networkProbSinglePred']:
                                     networkOutput[m][o][t] = torch.stack((networkOutput[m][o][t], torch.zeros_like(networkOutput[m][o][t])), dim=-1)
-
-
-
                     #store the outputs of the neural networks as a class variable
                     self.networkOutputs[m][o] = networkOutput[m][o] #this is of shape [first batch entry, second batch entry,...]
-
-
             #match the outputs with the hungarian matching and create a predicate to add to the logic program
             #NOTE: this is a hacky solution which leaves open the question wherever we can have neural mappings in our logic program
             if hungarian_matching is True:
-
                 obj_batch = {}
                 if "shade" in networkOutput:
                     obj_batch['color'] = obj_enc_batch[:,:,0:9] # [500, 4,20] #[c,c,c,c,c,c,c,c,c , s,s,s,s , h,h,h, z,z,z, confidence]
                     obj_batch['shape'] = obj_enc_batch[:,:,9:13]
                     obj_batch['shade'] = obj_enc_batch[:,:,13:16]
                     obj_batch['size'] = obj_enc_batch[:,:,16:19]
-
                     concepts = ['color', 'shape', 'shade','size']
                     slots = ['s1', 's2', 's3','s4']
                     num_obs = 4
-
                 else:
                     obj_batch['size'] = obj_enc_batch[:,:,0:3] # [500, 4,20] #[c,c,c,c,c,c,c,c,c , s,s,s,s , h,h,h, z,z,z, confidence]
                     obj_batch['material'] = obj_enc_batch[:,:,3:6]
                     obj_batch['shape'] = obj_enc_batch[:,:,6:10]
                     obj_batch['color'] = obj_enc_batch[:,:,10:19]
-
                     concepts = ['color', 'shape', 'material','size']
                     slots = ['s1', 's2', 's3','s4','s5','s6','s7','s8','s9','s10']
                     num_obs = 10
-
                 kl_cost_matrix = torch.zeros((num_obs,num_obs,len(query_batch)))
-
                 #build KL cost matrix
                 for obj_id in range(num_obs):
                     for slot_idx, slot in enumerate(slots):
@@ -768,57 +739,37 @@ class SLASH:
                             b = obj_batch[concept][:,obj_id].type(torch.FloatTensor)
                             a = networkOutput[concept][1][slot].detach().cpu()
                             summed_kl += torch.cdist(a[:,None,:],b[:,None,:]).squeeze()
-
                         kl_cost_matrix[obj_id, slot_idx] = summed_kl
-
                 kl_cost_matrix = np.einsum("abc->cab", kl_cost_matrix.cpu().numpy())
-
-
                 indices = np.array(
                 list(map(scipy.optimize.linear_sum_assignment, kl_cost_matrix)))
-
-
                 def slot_name_comb(x):
                     return ''.join([f"slot_name_comb(o{i[0]+1}, s{i[1]+1}). "  for i in x])
-
                 assignments = np.array(list(map(slot_name_comb, np.einsum("abc->acb",indices))))
                 query_batch = list(map(str.__add__, query_batch, assignments))
-
-
             #stack all nn outputs in matrix M
             big_M = torch.zeros([ len(self.mvpp['networkProb']),len(query_batch), self.max_n], device=self.grad_comp_device)
-
             c = 0
             for m in networkOutput:
                 for o in networkOutput[m]:
                     for t in networkOutput[m][o]:
                         big_M[c,:, :networkOutput[m][o][t].shape[1]]= networkOutput[m][o][t].detach().to('cpu')
                         c+=1
-
-
             #set all matrices in the dmvpp class to the cpu for model computation
             dmvpp.put_selection_mask_on_device('cpu')
             big_M = big_M.to(device='cpu')
             dmvpp.M =  dmvpp.M.to(device='cpu')
-
             #normalize the SLASH copy of M
             #big_M = normalize_M(big_M, dmvpp.non_binary_idx, dmvpp.selection_mask)
-
-
             step1 = time.time()
             forward_time.append(step1 - start_time)
-
             #### Step 2: compute stable models and the gradients
-
             #we split the network outputs such that we can put them on different processes
             if vqa:
                 big_M_splits, query_batch_split, obj_filter_split, p_num = self.split_network_outputs(big_M, obj_filter, query_batch, p_num)
             else:
                 big_M_splits, query_batch_split, _, p_num = self.split_network_outputs(big_M, None, query_batch, p_num)
                 obj_filter_split = [None] * len(query_batch_split)
-
-
-
             split_outputs = Parallel(n_jobs=p_num,backend='loky')( #backend='loky')(
                 delayed(compute_models_splitwise)
                 (
@@ -826,44 +777,28 @@ class SLASH:
                         dmvpp, method, k_num, same_threshold, obj_filter_split[i], vqa_params
                 )
                         for i in range(p_num))
-
             del big_M_splits
-
             #concatenate potential solutions, the atom indices and query p(Q) from all splits back into a single batch
             model_batch_list_splits = []
             models_idx_list = []
-
             #collect the models and model computation times
             for i in range(p_num):
                 model_batch_list_splits.extend(split_outputs[i][0])
                 models_idx_list.extend(split_outputs[i][1])   #batch, model, atoms
-
             #amount of Stable models used for gradient computations per batch
             sm_per_batch = np.sum([ len(sm_batch)  for splits in model_batch_list_splits for sm_batch in splits ])
             sm_per_batch_list.append(sm_per_batch)
-
             #save stable models
             try:
                 model_batch_list = np.concatenate(model_batch_list_splits)
-
                 self.stableModels = model_batch_list
-
             except ValueError:
                 pass
-                #print("fix later")
-                #print(e)
-                #for i in range(0, len(model_batch_list_splits)):
-                #    print("NUM:",i)
-                #    print(model_batch_list_splits[i])
-
-
             step2 = time.time()
             asp_time.append(step2 - step1)
-
             #compute gradients
             dmvpp.put_selection_mask_on_device(self.grad_comp_device)
             big_M = big_M.to(device=self.grad_comp_device)
-
             gradients_batch_list = []
             for bidx in count(start=0, step=1):
                 if bidx < model_batch_list_splits.__len__():
@@ -872,25 +807,17 @@ class SLASH:
                     gradients_batch_list.append(dmvpp.mvppLearn(model_batch_list_splits[bidx], models_idx_list[bidx], self.grad_comp_device))
                 else:
                     break
-
             del big_M
-
             #stack all gradients
             gradient_tensor = torch.stack(gradients_batch_list)
-
             #store the gradients, the stable models and p(Q) of the last batch processed
             self.networkGradients = gradient_tensor
-
-
             # Step 3: update parameters in neural networks
             step3 = time.time()
             gradient_time.append(step3 - step2)
-
-
             networkOutput_stacked = torch.zeros([gradient_tensor.shape[1], gradient_tensor.shape[0], gradient_tensor.shape[2]], device=self.device)
             gradient_tensor = gradient_tensor.swapaxes(0,1)
             org_idx = (gradient_tensor.sum(dim=2) != 0)#.flatten(0,1)
-
             #add all NN outputs which have a gradient into tensor for backward pass
             c = 0
             for m in networkOutput:
@@ -900,87 +827,67 @@ class SLASH:
                             if org_idx[c, bidx]:
                                 networkOutput_stacked[c,bidx, :networkOutput[m][o][t].shape[1]]= networkOutput[m][o][t][bidx]
                         c+=1
-
-
             #multiply every probability with its gradient
             gradient_tensor.requires_grad=True
             result = torch.einsum("abc, abc -> abc", gradient_tensor.to(device=self.device),networkOutput_stacked)
-
             not_used_npps = org_idx.sum() / (result.shape[0]* result.shape[1])
             result = result[result.abs() != 0 ].sum()
-
             #in the case vqa case we need to only use the npps over existing objects
             if vqa:
                 total_obj = 0
                 for of in obj_filter:
                     total_obj += 2* of + of * (of-1)
                 not_used_npps = org_idx.sum() / total_obj
-
-
             #get the number of discrete properties, e.g. sum all npps times the atoms entailing the npps
             sum_discrete_properties = sum([len(listElem) for listElem in self.mvpp['atom']]) * len(query_batch)
             sum_discrete_properties = torch.Tensor([sum_discrete_properties]).to(device=self.device)
-
             #scale to actualy used npps
             sum_discrete_properties = sum_discrete_properties * not_used_npps
-
             #get the mean over the sum of discrete properties
             result_ll = result / sum_discrete_properties
-
             #backward pass
             #for gradient descent we minimize the negative log likelihood
             result_nll = -result_ll
-
             #reset optimizers
             for  m in self.optimizers:
                 self.optimizers[m].zero_grad()
-
-
             #append the loss value
             total_loss.append(result_nll.cpu().detach().numpy())
-
             #backward pass
             result_nll.backward(retain_graph=True)
-
-
-
             #apply gradients with each optimizer
             for m in self.optimizers:
                 self.optimizers[m].step()
-
-
             last_step = time.time()
             backward_time.append(last_step - step3)
-
-
+            # Calculate and print training accuracy every accStep steps
+            is_first_step = batch_idx == 0
+            is_acc_step = (batch_idx + 1) % accStep == 0 if accStep != 0 else False
+            is_final_step = batch_idx == len(dataset_loader) - 1
+            if accStep != 0 and (is_first_step or is_acc_step or is_final_step):
+                accStep *= 2
+                downAcc = self.testConstraint(val_set, [self.mvpp['program']])
+                self.downstream_validation_history.append((epoch, batch_idx+1, downAcc))
+                print(f"[SLASH] Downstream validation iteration {batch_idx+1}: "
+                    f"Accuracy: {downAcc * 100:.2f}%")
             if writer is not None:
                 writer.add_scalar('train/loss_per_batch', result_nll.cpu().detach().numpy(), batch_idx+epoch*len(dataset_loader))
                 writer.add_scalar('train/sm_per_batch', sm_per_batch, batch_idx+epoch*len(dataset_loader))
-
             pbar.update()
         pbar.close()
-
         if writer is not None:
-
             writer.add_scalar('train/forward_time', np.sum(forward_time), epoch)
             writer.add_scalar('train/asp_time', np.sum(asp_time), epoch)
             writer.add_scalar('train/gradient_time', np.sum(gradient_time), epoch)
             writer.add_scalar('train/backward_time', np.sum(backward_time), epoch)
             writer.add_scalar('train/sm_per_epoch', np.sum(sm_per_batch_list), epoch)
-
-
         # print("avg loss over batches:", np.mean(total_loss))
         # print("1. forward time: ", np.sum(forward_time))
         # print("2. asp time:", np.sum(asp_time))
         # print("3. gradient time:", np.sum(gradient_time))
         # print("4. backward time: ", np.sum(backward_time))
         # print("SM processed", np.sum(sm_per_batch_list))
-
-
-
         return np.mean(total_loss), forward_time, asp_time, gradient_time, backward_time, sm_per_batch_list
-
-
 
 
     def testNetwork(self, network, testLoader, ret_confusion=False):
@@ -996,23 +903,18 @@ class SLASH:
         # check if each single prediction is correct
         singleCorrect = 0
         singleTotal = 0
-
         #list to collect targets and predictions for confusion matrix
         y_target = []
         y_pred = []
         with torch.no_grad():
             for data, target in testLoader:
-
                 output = self.networkMapping[network](data.to(self.device))
                 if self.n[network] > 2 :
                     pred = output.argmax(dim=-1, keepdim=True) # get the index of the max log-probability
                     target = target.to(self.device).view_as(pred)
-
                     correctionMatrix = (target.int() == pred.int()).view(target.shape[0], -1)
                     y_target = np.concatenate( (y_target, target.int().flatten().cpu() ))
                     y_pred = np.concatenate( (y_pred , pred.int().flatten().cpu()) )
-
-
                     correct += correctionMatrix.all(1).sum().item()
                     total += target.shape[0]
                     singleCorrect += correctionMatrix.sum().item()
@@ -1020,22 +922,18 @@ class SLASH:
                 else:
                     pred = np.array([int(i[0]<0.5) for i in output.tolist()])
                     target = target.numpy()
-
-
                     correct += (pred.reshape(target.shape) == target).sum()
                     total += len(pred)
         accuracy = correct / total
-
         if self.n[network] > 2:
             singleAccuracy = singleCorrect / singleTotal
         else:
             singleAccuracy = 0
-
         if ret_confusion:
             confusionMatrix = confusion_matrix(np.array(y_target), np.array(y_pred))
             return accuracy, singleAccuracy, confusionMatrix
-
         return accuracy, singleAccuracy
+
 
     # We interprete the most probable stable model(s) as the prediction of the inference mode
     # and check the accuracy of the inference mode by checking whether the query is satisfied by the prediction
@@ -1043,24 +941,19 @@ class SLASH:
         """ Return a real number in [0,1] denoting the accuracy
         @param dataset_loader: a dataloader object loading a dataset to test on
         """
-
         correct = 0
         len_dataset = 0
         #iterate over batch
         for data_batch, query_batch in dataset_loader:
             len_dataset += len(query_batch)
-
             #iterate over each entry in batch
             for dataIdx in range(len(query_batch)):
                 models = self.infer(data_batch, query=':- mistake.', mvpp=self.mvpp['program_asp'],  dataIdx= dataIdx)
-
                 query,_ =  replace_plus_minus_occurences(query_batch[dataIdx])
-
                 for model in models:
                     if self.satisfy(model, query):
                         correct += 1
                         break
-
         accuracy = 100. * correct / len_dataset
         return accuracy
 
@@ -1071,27 +964,22 @@ class SLASH:
         @param queryList: a list of strings, where each string is a set of constraints denoting a query
         @param mvppList: a list of MVPP programs (each is a string)
         """
-
-        # we evaluate all nerual networks
+        # Evaluate constraints without permanently changing the mode of models
+        # that are currently being trained (important for dropout/batch norm).
+        training_modes = {func: model.training for func, model in self.networkMapping.items()}
         for func in self.networkMapping:
             self.networkMapping[func].eval()
-
         # we count the correct prediction for each mvpp program
         count = [0]*len(mvppList)
-
-
         len_data = 0
         for data_batch, query_batch in dataset_loader:
             len_data += len(query_batch)
-
             # data is a dictionary. we need to edit its key if the key contains a defined const c
             # where c is defined in rule #const c=v.
             data_batch_keys = list(data_batch.keys())
             for key in data_batch_keys:
                 data_batch[self.constReplacement(key)] = data_batch.pop(key)
-
             # Step 1: get the output of each neural network
-
             for m in self.networkOutputs:
                 for o in self.networkOutputs[m]: #iterate over all output types and forwarded the input t trough the network
                     for t in self.networkOutputs[m][o]:
@@ -1099,118 +987,105 @@ class SLASH:
                                                                                     data_batch[t].to(self.device),
                                                                                     marg_idx=None,
                                                                                     type=o)
-
             # Step 2: turn the network outputs into a set of ASP facts
             aspFactsList = []
             for bidx in range(len(query_batch)):
                 aspFacts = ''
                 for ruleIdx in range(self.mvpp['networkPrRuleNum']):
-
                     #get the network outputs for the current element in the batch and put it into the correct rule
                     probs = [self.networkOutputs[m][inf_type][t][bidx][i*self.n[m]+j] for (m, i, inf_type, t, j) in self.mvpp['networkProb'][ruleIdx]]
-
                     if len(probs) == 1:
                         atomIdx = int(probs[0] < 0.5) # t is of index 0 and f is of index 1
                     else:
                         atomIdx = probs.index(max(probs))
                     aspFacts += self.mvpp['atom'][ruleIdx][atomIdx] + '.\n'
                 aspFactsList.append(aspFacts)
-
-
             # Step 3: check whether each MVPP program is satisfied
             for bidx in range(len(query_batch)):
                 for programIdx, program in enumerate(mvppList):
-
-                    query,_ =  replace_plus_minus_occurences(query_batch[bidx])
-                    program,_ = replace_plus_minus_occurences(program)
-
-                    # if the program has weak constraints
+                    query, _ = replace_plus_minus_occurences(query_batch[bidx])
+                    program, _ = replace_plus_minus_occurences(program)
                     if re.search(r':~.+\.[ \t]*\[.+\]', program) or re.search(r':~.+\.[ \t]*\[.+\]', query):
                         choiceRules = ''
                         for ruleIdx in range(self.mvpp['networkPrRuleNum']):
                             choiceRules += '1{' + '; '.join(self.mvpp['atom'][ruleIdx]) + '}1.\n'
-
-
-                        mvpp = MVPP(program+choiceRules)
+                        mvpp = MVPP(program + choiceRules)
                         models = mvpp.find_all_opt_SM_under_query_WC(query=query)
-                        models = [set(model) for model in models] # each model is a set of atoms
-                        targetAtoms = aspFacts[bidx].split('.\n')
-                        targetAtoms = set([atom.strip().replace(' ','') for atom in targetAtoms if atom.strip()])
+                        models = [set(model) for model in models]
+                        targetAtoms = aspFactsList[bidx].split('.\n')          # fixed
+                        targetAtoms = set([atom.strip().replace(' ', '') for atom in targetAtoms if atom.strip()])
                         if any(targetAtoms.issubset(model) for model in models):
                             count[programIdx] += 1
                     else:
-                        mvpp = MVPP(aspFacts[bidx] + program)
+                        mvpp = MVPP(aspFactsList[bidx] + program)              # fixed
                         if mvpp.find_one_SM_under_query(query=query):
                             count[programIdx] += 1
-        for programIdx, program in enumerate(mvppList):
-            print(f'The accuracy for constraint {programIdx+1} is {float(count[programIdx])/len_data}({float(count[programIdx])}/{len_data})')
+        accuracies = [value / len_data for value in count]
+        for programIdx, accuracy in enumerate(accuracies):
+            print(f'The accuracy for constraint {programIdx+1} is {accuracy}({float(count[programIdx])}/{len_data})')
+
+        for func, was_training in training_modes.items():
+            self.networkMapping[func].train(was_training)
+
+        # The learning loop uses the first constraint as its downstream
+        # validation metric.  Preserve all values when multiple constraints
+        # are supplied, while keeping the common one-constraint API scalar.
+        return accuracies[0] if len(accuracies) == 1 else accuracies
 
 
+    # def forward_slot_attention_pipeline(self, slot_net, dataset_loader):
+    #     """
+    #     Makes one forward pass trough the slot attention pipeline to obtain the probabilities/log likelihoods for all classes for each object.
+    #     The pipeline includes  the SlotAttention module followed by probabilisitc circuits for probabilites for the discrete properties.
+    #     @param slot_net: The SlotAttention module
+    #     @param dataset_loader: Dataloader containing a shapeworld/clevr dataset to be forwarded
+    #     """
+    #     with torch.no_grad():
+    #         probabilities = {}  # map to store all output probabilities(posterior)
+    #         slot_map = {} #map to store all slot module outputs
+    #         for data_batch, _,_ in dataset_loader:
+    #             #forward img to get slots
+    #             dataTensor_after_slot = slot_net(data_batch['im'].to(self.device))#SHAPE [BS,SLOTS, SLOTSIZE]
+    #             #dataTensor_after_slot has shape [bs, num_slots, slot_vector_length]
+    #             _, num_slots ,_ = dataTensor_after_slot.shape
+    #             for sdx in range(num_slots):
+    #                 slot_map["s"+str(sdx)] = dataTensor_after_slot[:,sdx,:]
+    #             #iterate over all slots and forward them through all nets (shape + color + ... )
+    #             for key in slot_map:
+    #                 if key not in probabilities:
+    #                     probabilities[key] = {}
+
+    #                 for network in self.networkMapping:
+    #                     posterior= self.networkMapping[network].forward(slot_map[key])#[BS, num_discrete_props]
+    #                     if network not in probabilities[key]:
+    #                         probabilities[key][network] = posterior
+    #                     else:
+    #                         probabilities[key][network] = torch.cat((probabilities[key][network], posterior))
+    #         return probabilities
 
 
-    def forward_slot_attention_pipeline(self, slot_net, dataset_loader):
-        """
-        Makes one forward pass trough the slot attention pipeline to obtain the probabilities/log likelihoods for all classes for each object.
-        The pipeline includes  the SlotAttention module followed by probabilisitc circuits for probabilites for the discrete properties.
-        @param slot_net: The SlotAttention module
-        @param dataset_loader: Dataloader containing a shapeworld/clevr dataset to be forwarded
-        """
-        with torch.no_grad():
-
-            probabilities = {}  # map to store all output probabilities(posterior)
-            slot_map = {} #map to store all slot module outputs
-
-            for data_batch, _,_ in dataset_loader:
-
-                #forward img to get slots
-                dataTensor_after_slot = slot_net(data_batch['im'].to(self.device))#SHAPE [BS,SLOTS, SLOTSIZE]
-
-                #dataTensor_after_slot has shape [bs, num_slots, slot_vector_length]
-                _, num_slots ,_ = dataTensor_after_slot.shape
+    # def get_recall(self, logits, labels,  topk=3):
 
 
-                for sdx in range(num_slots):
-                    slot_map["s"+str(sdx)] = dataTensor_after_slot[:,sdx,:]
+    #     # Calculate the recall
+    #     _, pred_idx = logits.topk(topk, 1, True, True) #get idx of the biggest k values in the prediction tensor
 
 
-                #iterate over all slots and forward them through all nets (shape + color + ... )
-                for key in slot_map:
-                    if key not in probabilities:
-                        probabilities[key] = {}
+    #     #gather gets the elements from a given indices tensor. Here we get the elements at the same positions from our (top5) predictions
+    #     #we then sum all entries up along the axis and therefore count the top-5 entries in the labels tensors at the prediction position indices
+    #     correct = torch.sum(labels.gather(1, pred_idx), dim=1)
 
-                    for network in self.networkMapping:
-                        posterior= self.networkMapping[network].forward(slot_map[key])#[BS, num_discrete_props]
-                        if network not in probabilities[key]:
-                            probabilities[key][network] = posterior
-                        else:
-                            probabilities[key][network] = torch.cat((probabilities[key][network], posterior))
+    #     #now we sum up all true labels. We clamp them to be maximum top5
+    #     correct_label = torch.clamp(torch.sum(labels, dim = 1), 0, topk)
 
+    #     #we now can compare if the number of correctly found top-5 labels on the predictions vector is the same as on the same positions as the GT vector
+    #     #if the num of gt labels is zero (question has no answer) then we get a nan value for the div by 0 -> we replace this with recall 1
+    #     recall = torch.mean(torch.nan_to_num(correct / correct_label,1)).item()
 
-            return probabilities
-
-    def get_recall(self, logits, labels,  topk=3):
+    #     return recall
 
 
-        # Calculate the recall
-        _, pred_idx = logits.topk(topk, 1, True, True) #get idx of the biggest k values in the prediction tensor
-
-
-        #gather gets the elements from a given indices tensor. Here we get the elements at the same positions from our (top5) predictions
-        #we then sum all entries up along the axis and therefore count the top-5 entries in the labels tensors at the prediction position indices
-        correct = torch.sum(labels.gather(1, pred_idx), dim=1)
-
-        #now we sum up all true labels. We clamp them to be maximum top5
-        correct_label = torch.clamp(torch.sum(labels, dim = 1), 0, topk)
-
-        #we now can compare if the number of correctly found top-5 labels on the predictions vector is the same as on the same positions as the GT vector
-        #if the num of gt labels is zero (question has no answer) then we get a nan value for the div by 0 -> we replace this with recall 1
-        recall = torch.mean(torch.nan_to_num(correct / correct_label,1)).item()
-
-        return recall
-
-
-
-    def testVQA(self, test_loader, p_num = 1, k=5, vqa_params= None):
+    # def testVQA(self, test_loader, p_num = 1, k=5, vqa_params= None):
         """
         @param test_loader: a dataloader object
         @param p_num: integer denoting the number of processes to split the batches on

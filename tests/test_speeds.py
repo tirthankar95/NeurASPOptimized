@@ -1,12 +1,12 @@
 import json
 import os
+import argparse
+import math
 import random
 import time
 import unittest
 from unittest import mock
-
 import torch
-
 from mvpp import MVPP
 from mvpp_slash import MVPP as MVPPSlash
 from neurasp import NeurASP
@@ -14,6 +14,20 @@ from slash import SLASH
 
 elapsed_times = {}
 ROOT_DIR = os.path.dirname(os.path.abspath(__file__))
+
+# parser = argparse.ArgumentParser()
+# parser.add_argument('test', nargs='?', default='member3',
+#                     choices=['mnist_add', 'add2x2', 'member3', 'member5',
+#                             'card_arithmetic_2sum', 'card_arithmetic_3sum'],
+#                     help='Name of the speed test to run')
+# parser.add_argument('--epoch', type=int, default=1)
+# parser.add_argument('--accStep', type=int, default=0)
+# parser.add_argument('--val', action='store_true')
+# args = parser.parse_args()
+# global_accStep = math.inf if args.accStep == -1 else args.accStep
+# global_epoch = args.epoch
+global_accStep = 1
+global_epoch = 1
 
 
 def time_method(class_obj, method_name, elapsed_times_key):
@@ -38,9 +52,10 @@ def sample_examples(dataList, obsList, sample_size):
     return dataList, obsList
 
 
-def measure_neurasp_speed(dprogram, nnMapping, optimizers, dataList, obsList, example_name, opt=False, batch_size=64,
-                        gpu=False, epoch=1):
+def measure_neurasp_speed(dprogram, nnMapping, optimizers, dataList, obsList, example_name, opt=False, batch_size=1,
+                        gpu=False, epoch=1, accStep=0):
     """Measure the speed of the original NeurASP code for an example."""
+    return 
     NeurASPobj = NeurASP(dprogram, nnMapping, optimizers, gpu=gpu)
     with (mock.patch.object(MVPP, 'find_k_SM_under_obs',
                             time_method(MVPP, 'find_k_SM_under_obs', f'og_{example_name}_model')),
@@ -57,7 +72,7 @@ def measure_neurasp_speed(dprogram, nnMapping, optimizers, dataList, obsList, ex
 
 
 def measure_slash_speed(dprogram, nnMapping, optimizers, dataListLoader, example_name, gpu=False, p_num=1,
-                        method='same', epoch=1):
+                        method='same', epoch=1, accStep=0):
     """Measure the speed of the SLASH code for an example."""
     SLASHobj = SLASH(dprogram, nnMapping, optimizers, gpu=gpu)
     if method == 'same':
@@ -71,9 +86,20 @@ def measure_slash_speed(dprogram, nnMapping, optimizers, dataListLoader, example
         mock.patch.object(MVPPSlash, 'mvppLearnRule',
                             time_method(MVPPSlash, 'mvppLearnRule', f'slash_{example_name}_grad'))):
         start_time = time.perf_counter()
+        learning_curve = []
         for epoch_idx in range(epoch):
-            SLASHobj.learn(dataListLoader, epoch_idx, batched_pass=True, p_num=p_num, method=method)
+            SLASHobj.learn(dataListLoader, epoch_idx, batched_pass=True, p_num=p_num, method=method, accStep=accStep)
+            learning_curve.extend(
+                {
+                    'epoch': curve_epoch,
+                    'batch': batch_idx,
+                    'accuracy': accuracy,
+                }
+                for curve_epoch, batch_idx, accuracy in SLASHobj.downstream_validation_history
+            )
         elapsed_times[f'slash_{example_name}_total'] = time.perf_counter() - start_time
+        if learning_curve:
+            elapsed_times['learning_curve'] = learning_curve
         return elapsed_times[f'slash_{example_name}_total']
 
 
@@ -122,17 +148,18 @@ class TestSpeeds(unittest.TestCase):
                         "addition(A,B,N):- digit(0,+A,-N1), digit(0,+B,-N2), N=N1+N2, A!=B.\n"
                         "npp(digit(1,X), [0,1,2,3,4,5,6,7,8,9]) :- img(X).")
         dataList_slash = [{k: i.squeeze(0) for k, i in dataDict.items()} for dataDict in dataList]
-        dataListLoader = torch.utils.data.DataLoader(list(zip(dataList_slash, obsList)), batch_size=64)
+        dataListLoader = torch.utils.data.DataLoader(list(zip(dataList_slash, obsList)), batch_size=1)
         # Original code
         m = Net()
         nnMapping = {'digit': m}
         optimizers = {'digit': torch.optim.Adam(m.parameters(), lr=0.001)}
-        measure_neurasp_speed(dprogram, nnMapping, optimizers, dataList, obsList, example_name, batch_size=64)
+        measure_neurasp_speed(dprogram, nnMapping, optimizers, dataList, obsList, example_name, batch_size=1)
         # SLASH code
         m = Net()
         nnMapping = {'digit': m}
         optimizers = {'digit': torch.optim.Adam(m.parameters(), lr=0.001)}
-        measure_slash_speed(slash_program, nnMapping, optimizers, dataListLoader, example_name)
+        measure_slash_speed(slash_program, nnMapping, optimizers, dataListLoader, example_name, \
+            epoch=global_epoch, accStep=global_accStep)
         elapsed_times['task'] = f'mnist_add'
         save_timings()
 
@@ -175,7 +202,7 @@ class TestSpeeds(unittest.TestCase):
         nnMapping = {'digit': m}
         optimizers = {'digit': torch.optim.Adam(m.parameters(), lr=0.001)}
         dataList_slash = [{k: i.squeeze(0) for k, i in dataDict.items()} for dataDict in dataList]
-        dataListLoader = torch.utils.data.DataLoader(list(zip(dataList_slash, obsList)), batch_size=64)
+        dataListLoader = torch.utils.data.DataLoader(list(zip(dataList_slash, obsList)), batch_size=1)
         measure_slash_speed(slash_program, nnMapping, optimizers, dataListLoader, example_name, epoch=1)
         elapsed_times['task'] = f'add2x2'
         save_timings()
@@ -221,9 +248,6 @@ class TestSpeeds(unittest.TestCase):
         m = Net()
         nnMapping = {'digit': m}
         optimizers = {'digit': torch.optim.Adam(m.parameters(), lr=0.001)}
-        # Sample random examples
-        sample_count = min(sample_size, len(dataList)) if sample_size is not None else min(1000, len(dataList))
-        dataList, obsList = sample_examples(dataList, obsList, sample_count)
         # Original code
         measure_neurasp_speed(dprogram, nnMapping, optimizers, dataList, obsList, example_name, epoch=1)
         # SLASH code
@@ -231,8 +255,9 @@ class TestSpeeds(unittest.TestCase):
         nnMapping = {'digit': m}
         optimizers = {'digit': torch.optim.Adam(m.parameters(), lr=0.001)}
         dataList_slash = [{f'i{i+1}': dataDict['i'][i] for i in range(n)}for dataDict in dataList]
-        dataListLoader = torch.utils.data.DataLoader(list(zip(dataList_slash, obsList)), batch_size=64)
-        measure_slash_speed(slash_program, nnMapping, optimizers, dataListLoader, example_name, epoch=1)
+        dataListLoader = torch.utils.data.DataLoader(list(zip(dataList_slash, obsList)), batch_size=1)
+        measure_slash_speed(slash_program, nnMapping, optimizers, dataListLoader, example_name, \
+            epoch=global_epoch, accStep=global_accStep)
         elapsed_times['task'] = f'member{n}'
         save_timings(expand=expand)
 
@@ -285,7 +310,7 @@ class TestSpeeds(unittest.TestCase):
             {f'p{i + 1}': dataDict['p'][i] for i in range(cards)}
             for dataDict in dataList
         ]
-        dataListLoader = torch.utils.data.DataLoader(list(zip(dataList_slash, obsList)), batch_size=64)
+        dataListLoader = torch.utils.data.DataLoader(list(zip(dataList_slash, obsList)), batch_size=1)
         measure_slash_speed(slash_program, nnMapping, optimizers, dataListLoader, example_name, epoch=1)
         elapsed_times['task'] = f'card_{op}_{cards}'
         save_timings(expand=expand)

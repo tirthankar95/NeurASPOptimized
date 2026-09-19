@@ -216,23 +216,22 @@ class MVPP:
 
     # k = 0 means to find all stable models
     def find_k_SM_under_query(self, query, k=3):
-
         program = self.pi_prime + query
         clingo_control = clingo.Control(["--warn=none", str(int(k))])
         models = []
-
         try:
             clingo_control.add("base", [], program)
         except:
             print(f"\nPi': \n{program}")
-
         clingo_control.ground([("base", [])])
         clingo_control.solve([], lambda model: models.append(model.symbols(atoms=True)))
-
-        if len(models) == 0:
-            exit()
+        # An unsatisfiable query is a valid result during evaluation: it means
+        # that this prediction does not satisfy the constraint.  Returning an
+        # empty list lets callers record it as an incorrect example instead of
+        # terminating the entire training run via ``SystemExit``.
+        if not models:
+            return []
         models = [[str(atom) for atom in model] for model in models]
-
         return models
 
     # we assume query is a string containing a valid Clingo program,
