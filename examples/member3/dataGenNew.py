@@ -42,7 +42,7 @@ testLoader = torch.utils.data.DataLoader(
     shuffle=True
 )
 
-BATCH_SIZE = 50
+BATCH_SIZE = 32
 train_loader = torch.utils.data.DataLoader(trainDataset, batch_size=BATCH_SIZE, shuffle=True)
 dataList = []
 obsList = []

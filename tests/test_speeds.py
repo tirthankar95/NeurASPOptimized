@@ -24,10 +24,12 @@ parser.add_argument('test', nargs='?', default='member3',
                     choices=['mnist_add', 'add2x2', 'member3', 'member5',
                             'card_arithmetic_2sum', 'card_arithmetic_3sum'],
                     help='Name of the speed test to run')
+parser.add_argument('--epoch', type=int, default=1)
 parser.add_argument('--accStep', type=int, default=0)
 parser.add_argument('--val', action='store_true')
 args = parser.parse_args()
 accStep = math.inf if args.accStep == -1 else args.accStep
+global_epoch = args.epoch
 
 
 def remove_cached_stable_models():
@@ -161,12 +163,11 @@ def test_speeds_mnist_add(seed=None):
     dataListLoader = list(zip(dataList_slash, obsList))
     dataListLoaderN = list(zip(dataListN, obsListN))
     # CLI-controlled validation: --val runs a single epoch and reports accuracy on testLoader every accStep
-    valDataset, gpu = None, None
+    valDataset, gpu = testLoader, None
     local_accStep = accStep
-    epoch = 1
+    epoch = global_epoch
     if args.val:
         local_accStep, gpu = 1, True
-        valDataset = testLoader
     # Original code
     m = Net()
     nnMapping = {'digit': m}
@@ -209,12 +210,11 @@ def test_speeds_add2x2():
     total_data_size = sum(len(obs) for obs in obsList)
     print(f'DataSize: {total_data_size} ({len(dataList)} batches)')
     # CLI-controlled validation: --val runs a single epoch and reports accuracy on testLoader every accStep
-    valDataset, gpu = None, None
+    valDataset, gpu = testLoader, None
     local_accStep = accStep
-    epoch = 1
+    epoch = global_epoch
     if args.val:
         local_accStep, gpu = 1, True
-        valDataset = testLoader
     # Original code
     m = Net()
     nnMapping = {'digit': m}
@@ -252,17 +252,15 @@ def test_speeds_member(seed=None, n=5, sample_size=None):
         os.remove('saved_models/test_stable_models.pkl')
     example_name = 'member'
     if n==3:
+        from examples.member3.dataGenNew import dataList as dataListN, obsList as obsListN
         from examples.member3.dataGen import dataList, obsList, testLoader
         from examples.member3.network import Net
         dprogram = ("nn(digit(3,i), [0,1,2,3,4,5,6,7,8,9]).\n"
                     "member(D,0) :- digit(0,i,N1), digit(1,i,N2), digit(2,i,N3),\n"
                     "check(D), D!=N1, D!=N2, D!=N3.\n"
                     "member(D,1) :- check(D), not member(D,0).")
-        slash_program = ("img(i1). img(i2). img(i3).\n"
-                        "npp(digit(1,X), [0,1,2,3,4,5,6,7,8,9]) :- img(X).\n"
-                        "member(D,0) :- digit(0,+i1,-N1), digit(0,+i2,-N2), digit(0,+i3,-N3), check(D), D!=N1, D!=N2, D!=N3.\n"
-                        "member(D,1) :- check(D), not member(D,0).")
     elif n==5:
+        from examples.member5.dataGenNew import dataList as dataListN, obsList as obsListN
         from examples.member5.dataGen import dataList, obsList, testLoader
         from examples.member5.network import Net
         dprogram = ("nn(digit(5,i), [0,1,2,3,4,5,6,7,8,9]).\n"
@@ -273,22 +271,18 @@ def test_speeds_member(seed=None, n=5, sample_size=None):
     if sample_size is not None:
         expand = len(dataList) / sample_size
     # CLI-controlled validation: --val runs a single epoch and reports accuracy on testLoader every accStep
-    valDataset, gpu = None, None
+    valDataset, gpu = testLoader, None
     local_accStep = accStep
-    epoch = 1
+    epoch = global_epoch
     if args.val:
-        local_accStep, gpu = 1, True
-        valDataset = testLoader
+        local_accStep, gpu = 1, False
     m = Net()
     nnMapping = {'digit': m}
     optimizers = {'digit': torch.optim.Adam(m.parameters(), lr=0.001)}
-    # Sample random examples
-    sample_count = min(sample_size, len(dataList)) if sample_size is not None else min(1000, len(dataList))
-    dataList, obsList = sample_examples(dataList, obsList, sample_count)
     total_data_size = sum(len(obs) for obs in obsList)
     print(f'DataSize: {total_data_size} ({len(dataList)} batches)')
     # Original code
-    measure_neurasp_speed(dprogram, nnMapping, optimizers, dataList, obsList, example_name, epoch=1, gpu=gpu,
+    measure_neurasp_speed(dprogram, nnMapping, optimizers, dataList, obsList, example_name, epoch=epoch, gpu=gpu,
                         accStep=local_accStep)
     # New code
     m = Net()
@@ -299,9 +293,10 @@ def test_speeds_member(seed=None, n=5, sample_size=None):
     measure_newrasp_speed(dprogram, nnMapping, optimizers, dataList_new, example_name, epoch=epoch, gpu=gpu,
                         valDataset=valDataset, accStep=local_accStep)
     # New grasp
+    m = Net()
     nnMapping = {'digit': m}
     optimizers = {'digit': torch.optim.Adam(m.parameters(), lr=0.001)}
-    dataListLoaderN = list(zip(dataList, obsList))
+    dataListLoaderN = list(zip(dataListN, obsListN))
     measure_newgrasp_speed(dprogram, nnMapping, optimizers, dataListLoaderN, example_name, epoch=epoch, gpu=gpu,
                         valDataset=valDataset, accStep=local_accStep)
     save_timings(expand=expand)
@@ -340,12 +335,11 @@ def test_speeds_card_arithmetic(op, cards, sample_size=None):
         dataList.append({'p': data['p']})
         obsList.append(obs)
     # CLI-controlled validation: --val runs a single epoch and reports accuracy on valDataset every accStep
-    valLoader, gpu = None, None
+    valLoader, gpu = None, torch.utils.data.DataLoader(valDataset, batch_size=4)
     local_accStep = accStep
-    epoch = 1
+    epoch = global_epoch
     if args.val:
         local_accStep, gpu = 1, True
-        valLoader = torch.utils.data.DataLoader(valDataset, batch_size=4)
     # Original code
     measure_neurasp_speed(dprogram, nnMapping, optimizers, dataList, obsList, example_name, batch_size=32,
                         epoch=epoch, gpu=gpu, accStep=local_accStep)
